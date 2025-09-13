@@ -1,0 +1,551 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MVP Security Layer - Enables GuardDuty, Security Hub, CloudTrail, Config with optional conformance packs, centralized logging, alerting, gap remediation, and reporting. Single/multi-region support. $100 one-time fee.
+
+Parameters:
+  DeploymentRegion:
+    Type: String
+    Default: us-east-1
+    Description: Primary deployment region.
+    AllowedPattern: ^[a-z]{2}-[a-z]+-[0-9]+$
+  MultiRegions:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Optional comma-separated list of additional regions (e.g., us-west-2,eu-west-1). Leave blank for single-region.
+  ConformancePackOption:
+    Type: String
+    Default: Both
+    AllowedValues: [Both, AWS-Foundational, CIS, None]
+    Description: Select conformance packs for Config.
+  OptOutGuardDuty:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+  OptOutConfig:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+  SNSEmails:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Single email for alerts (optional; if empty, no alerts sent).
+  S3BucketName:
+    Type: String
+    Description: Unique S3 bucket name for logs/reports (global unique).
+    AllowedPattern: ^[a-z0-9][a-z0-9-]{2,62}[a-z0-9]$
+
+Conditions:
+  EnableMultiRegion: !Not [!Equals [!Join ['', !Ref MultiRegions], '']]
+  EnableGuardDuty: !Equals [!Ref OptOutGuardDuty, false]
+  EnableConfig: !Equals [!Ref OptOutConfig, false]
+  EnableAWSFoundationalPack: !Or [!Equals [!Ref ConformancePackOption, Both], !Equals [!Ref ConformancePackOption, AWS-Foundational]]
+  EnableCISPack: !Or [!Equals [!Ref ConformancePackOption, Both], !Equals [!Ref ConformancePackOption, CIS]]
+  HasSNSEmails: !Not [!Equals [!Join ['', !Ref SNSEmails], '']]
+
+Mappings:
+  ConformancePacks:
+    AWSFoundational:
+      Name: AwsFoundationalSecurityBestPractices
+      TemplateURI: https://s3.amazonaws.com/solutions-reference/aws-foundational-security-best-practices/latest/aws-foundational-security-best-practices.template
+    CIS:
+      Name: CIS-AWS-Foundations-Benchmark-Level1
+      TemplateURI: https://s3.amazonaws.com/solutions-reference/aws-config-conformance-packs/latest/Operational-Best-Practices-for-CIS-AWS-Foundations-Benchmark-Level-1.yaml
+
+Resources:
+  SecurityLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: ComplianceLifecycle
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+            ExpirationInDays: 365
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: NonCurrentVersions
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: GOVERNANCE
+            Days: 365
+      VersioningConfiguration:
+        Status: Enabled
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SecurityLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: !Sub arn:aws:s3:::${SecurityLogBucket}/*
+            Condition:
+              Bool: { "aws:SecureTransport": false }
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !Sub arn:aws:s3:::${SecurityLogBucket}
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${SecurityLogBucket}/cloudtrail/*
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': bucket-owner-full-control
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !Sub arn:aws:s3:::${SecurityLogBucket}
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${SecurityLogBucket}/config/*
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': bucket-owner-full-control
+                aws:SourceAccount: !Ref AWS::AccountId
+  CloudTrailRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudTrailS3Write
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub arn:aws:s3:::${SecurityLogBucket}/cloudtrail/*
+              - Effect: Allow
+                Action: s3:GetBucketAcl
+                Resource: !Sub arn:aws:s3:::${SecurityLogBucket}
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: config.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
+      Policies:
+        - PolicyName: ConfigS3Delivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub arn:aws:s3:::${SecurityLogBucket}/config/*
+              - Effect: Allow
+                Action: s3:GetBucketAcl
+                Resource: !Sub arn:aws:s3:::${SecurityLogBucket}
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecurityAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - guardduty:*
+                  - securityhub:*
+                  - cloudtrail:*
+                  - config:*
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:GetObject
+                  - s3:GetBucketAcl
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:ListBucket
+                  # cfn-lint: ignore W3037
+                  - s3:PutBucketEncryption
+                  - iam:List*
+                  - iam:Get*
+                  - ec2:Describe*
+                  - rds:Describe*
+                Resource: '*'
+  EnableServicesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+
+          def handler(event, context):
+            response_data = {}
+            try:
+              props = event['ResourceProperties']
+              regions = props['Regions'].split(',') if props['Regions'] else [props['PrimaryRegion']]
+              for region in regions:
+                try:
+                  if props['EnableGuardDuty'] == 'true':
+                    gd = boto3.client('guardduty', region_name=region)
+                    detectors = gd.list_detectors()['DetectorIds']
+                    if not detectors:
+                      gd.create_detector(Enable=True)
+                    response_data[f'GuardDuty_{region}'] = 'Enabled'
+                  else:
+                    response_data[f'GuardDuty_{region}'] = 'Skipped (OptOutGuardDuty=true)'
+
+                  sh = boto3.client('securityhub', region_name=region)
+                  try:
+                    sh.describe_hub()
+                    response_data[f'SecurityHub_{region}'] = 'Already enabled'
+                  except sh.exceptions.InvalidAccessException:
+                    sh.enable_security_hub()
+                    response_data[f'SecurityHub_{region}'] = 'Enabled'
+
+                  ct = boto3.client('cloudtrail', region_name=region)
+                  trails = ct.describe_trails()['trailList']
+                  trail_exists = any(trail['Name'] == 'SecurityTrail' for trail in trails)
+                  if not trail_exists:
+                    ct.create_trail(
+                      Name='SecurityTrail',
+                      S3BucketName=props['BucketName'],
+                      IsMultiRegionTrail=props['IsMultiRegionTrail'] == 'true',
+                      EnableLogFileValidation=True,
+                      IncludeGlobalServiceEvents=True
+                    )
+                    ct.start_logging(Name='SecurityTrail')
+                    response_data[f'CloudTrail_{region}'] = 'Enabled'
+                  else:
+                    response_data[f'CloudTrail_{region}'] = 'Already exists'
+
+                  if props['EnableConfig'] == 'true':
+                    cfg = boto3.client('config', region_name=region)
+                    recorders = cfg.describe_configuration_recorders()['ConfigurationRecorders']
+                    recorder_exists = any(rec['name'] == 'SecurityConfigRecorder' for rec in recorders)
+                    if not recorder_exists:
+                      cfg.put_configuration_recorder(
+                        ConfigurationRecorder={
+                          'name': 'SecurityConfigRecorder',
+                          'roleARN': props['ConfigRoleArn'],
+                          'recordingGroup': {'allSupported': True}
+                        }
+                      )
+                      cfg.put_delivery_channel(
+                        DeliveryChannel={
+                          'name': 'SecurityDeliveryChannel',
+                          's3BucketName': props['BucketName'],
+                          'configSnapshotDeliveryProperties': {'deliveryFrequency': 'Six_Hours'}
+                        }
+                      )
+                      cfg.start_configuration_recorder(ConfigurationRecorderName='SecurityConfigRecorder')
+                      response_data[f'Config_{region}'] = 'Enabled'
+                    else:
+                      response_data[f'Config_{region}'] = 'Already exists'
+
+                    if props['EnableAWSFoundational'] == 'true' and props['AWSFoundationalName'] != 'none':
+                      try:
+                        cfg.put_conformance_pack(
+                          ConformancePackName=props['AWSFoundationalName'],
+                          TemplateURI=props['AWSFoundationalURI']
+                        )
+                        response_data[f'AWSFoundational_{region}'] = 'Enabled'
+                      except cfg.exceptions.ConformancePackAlreadyExistsException:
+                        response_data[f'AWSFoundational_{region}'] = 'Already exists'
+                    if props['EnableCIS'] == 'true' and props['CISName'] != 'none':
+                      try:
+                        cfg.put_conformance_pack(
+                          ConformancePackName=props['CISName'],
+                          TemplateURI=props['CISURI']
+                        )
+                        response_data[f'CIS_{region}'] = 'Enabled'
+                      except cfg.exceptions.ConformancePackAlreadyExistsException:
+                        response_data[f'CIS_{region}'] = 'Already exists'
+
+                except Exception as e:
+                  print(f"Error in region {region}: {str(e)}")
+                  response_data[f'Error_{region}'] = str(e)
+                  raise
+
+              print(f"Response data: {json.dumps(response_data)}")
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+            except Exception as e:
+              print(f"Top-level error: {str(e)}")
+              cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+  EnableServicesCustomResource:
+    Type: Custom::EnableServices
+    DependsOn: BucketPolicy  # Ensure policy is applied before enabling services
+    Properties:
+      ServiceToken: !GetAtt EnableServicesLambda.Arn
+      PrimaryRegion: !Ref DeploymentRegion
+      Regions: !Join [',', !Ref MultiRegions]
+      IsMultiRegionTrail: !If [EnableMultiRegion, 'true', 'false']
+      EnableGuardDuty: !If [EnableGuardDuty, 'true', 'false']
+      EnableConfig: !If [EnableConfig, 'true', 'false']
+      EnableAWSFoundational: !If [EnableAWSFoundationalPack, 'true', 'false']
+      EnableCIS: !If [EnableCISPack, 'true', 'false']
+      AWSFoundationalName: !If [EnableAWSFoundationalPack, !FindInMap [ConformancePacks, AWSFoundational, Name], 'none']
+      AWSFoundationalURI: !If [EnableAWSFoundationalPack, !FindInMap [ConformancePacks, AWSFoundational, TemplateURI], 'none']
+      CISName: !If [EnableCISPack, !FindInMap [ConformancePacks, CIS, Name], 'none']
+      CISURI: !If [EnableCISPack, !FindInMap [ConformancePacks, CIS, TemplateURI], 'none']
+      BucketName: !Ref S3BucketName
+      ConfigRoleArn: !GetAtt ConfigRole.Arn
+  GapRemediationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+
+          def handler(event, context):
+            response_data = {'Gaps': []}
+            try:
+              s3 = boto3.client('s3')
+              iam = boto3.client('iam')
+              ec2 = boto3.client('ec2')
+              rds = boto3.client('rds')
+              ct = boto3.client('cloudtrail')
+              gd = boto3.client('guardduty')
+
+              # 1. Public S3 buckets
+              buckets = s3.list_buckets()['Buckets']
+              for b in buckets:
+                try:
+                  acl = s3.get_bucket_acl(Bucket=b['Name'])['Grants']
+                  if any(g['Grantee']['Type'] == 'Group' and 'AllUsers' in g['Grantee'].get('URI', '') for g in acl):
+                    response_data['Gaps'].append(f'Public S3 bucket: {b["Name"]}')
+                    s3.put_bucket_public_access_block(
+                      Bucket=b['Name'],
+                      PublicAccessBlockConfiguration={
+                        'BlockPublicAcls': True,
+                        'IgnorePublicAcls': True,
+                        'BlockPublicPolicy': True,
+                        'RestrictPublicBuckets': True
+                      }
+                    )
+                except:
+                  pass
+
+              # 2. No MFA on root/users
+              summary = iam.get_account_summary()['SummaryMap']
+              if summary.get('AccountMFAEnabled', 0) == 0:
+                response_data['Gaps'].append('No MFA on root - Manual remediation required')
+              users = iam.list_users()['Users']
+              for u in users:
+                if not iam.list_mfa_devices(UserName=u['UserName'])['MFADevices']:
+                  response_data['Gaps'].append(f'No MFA on user: {u["UserName"]} - Manual remediation')
+
+              # 3. Over-permissive IAM policies
+              policies = iam.list_policies(Scope='Local')['Policies']
+              for p in policies:
+                doc = iam.get_policy_version(PolicyArn=p['Arn'], VersionId=p['DefaultVersionId'])['PolicyVersion']['Document']
+                if any(s.get('Effect') == 'Allow' and (s.get('Action') == '*' or s.get('Action') == ['*']) for s in doc.get('Statement', [])):
+                  response_data['Gaps'].append(f'Over-permissive policy: {p["PolicyName"]} - Review manually')
+
+              # 4. Unencrypted S3 buckets
+              for b in buckets:
+                try:
+                  s3.get_bucket_encryption(Bucket=b['Name'])
+                except s3.exceptions.ClientError as e:
+                  if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
+                    response_data['Gaps'].append(f'Unencrypted S3 bucket: {b["Name"]}')
+                    s3.put_bucket_encryption(
+                      Bucket=b['Name'],
+                      ServerSideEncryptionConfiguration={
+                        'Rules': [{'ApplyServerSideEncryptionByDefault': {'SSEAlgorithm': 'AES256'}}]
+                      }
+                    )
+
+              # 5. Open security groups
+              sgs = ec2.describe_security_groups()['SecurityGroups']
+              for sg in sgs:
+                for rule in sg.get('IpPermissions', []):
+                  if rule.get('FromPort') in [22, 3389] and any(ip.get('CidrIp') == '0.0.0.0/0' for ip in rule.get('IpRanges', [])):
+                    response_data['Gaps'].append(f'Open security group: {sg["GroupId"]} (port {rule["FromPort"]}) - Manual revoke')
+
+              # 6. Unused IAM credentials
+              for u in users:
+                access_keys = iam.list_access_keys(UserName=u['UserName'])['AccessKeyMetadata']
+                for key in access_keys:
+                  last_used = iam.get_access_key_last_used(AccessKeyId=key['AccessKeyId'])['AccessKeyLastUsed']
+                  if not last_used.get('LastUsedDate'):
+                    response_data['Gaps'].append(f'Unused access key for user: {u["UserName"]} - Deactivate manually')
+
+              # 7. No CloudTrail
+              trails = ct.describe_trails()['trailList']
+              if not trails:
+                response_data['Gaps'].append('No CloudTrail enabled - Already enabling via stack')
+
+              # 8. No GuardDuty
+              detectors = gd.list_detectors()['DetectorIds']
+              if not detectors:
+                response_data['Gaps'].append('No GuardDuty enabled - Already enabling via stack')
+
+              # 9. Public EC2 instances
+              instances = ec2.describe_instances()['Reservations']
+              for res in instances:
+                for inst in res['Instances']:
+                  if inst.get('PublicIpAddress'):
+                    response_data['Gaps'].append(f'Public EC2 instance: {inst["InstanceId"]} - Make private manually')
+
+              # 10. Unencrypted RDS instances
+              dbs = rds.describe_db_instances()['DBInstances']
+              for db in dbs:
+                if not db.get('StorageEncrypted'):
+                  response_data['Gaps'].append(f'Unencrypted RDS instance: {db["DBInstanceIdentifier"]} - Enable encryption manually')
+
+              s3.put_object(
+                Bucket=event['ResourceProperties']['BucketName'],
+                Key='gap-report.json',
+                Body=json.dumps(response_data)
+              )
+
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+            except Exception as e:
+              cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+  GapRemediationCustomResource:
+    Type: Custom::GapRemediation
+    Properties:
+      ServiceToken: !GetAtt GapRemediationLambda.Arn
+      BucketName: !Ref S3BucketName
+    DependsOn: EnableServicesCustomResource
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasSNSEmails
+    Properties:
+      Subscription:
+        - Endpoint: !Select [0, !Ref SNSEmails]
+          Protocol: email
+  AlertRule:
+    Type: AWS::Events::Rule
+    Condition: HasSNSEmails
+    Properties:
+      Description: Alert on HIGH/CRITICAL Security Hub findings
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+        detail:
+          findings:
+            Severity:
+              Label:
+                - HIGH
+                - CRITICAL
+      Targets:
+        - Arn: !Ref SNSTopic
+          Id: AlertSNS
+  ExportLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          from io import StringIO
+          import json
+
+          def handler(event, context):
+            sh = boto3.client('securityhub')
+            cfg = boto3.client('config')
+            s3 = boto3.client('s3')
+
+            findings = sh.get_findings(Filters={'SeverityLabel': [{'Value': 'HIGH', 'Comparison': 'EQUALS'}, {'Value': 'CRITICAL', 'Comparison': 'EQUALS'}]})['Findings']
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(['Title', 'Severity', 'Description'])
+            for f in findings:
+              writer.writerow([f['Title'], f['Severity']['Label'], f['Description']])
+            s3.put_object(Bucket=event.get('BucketName', 'default-bucket'), Key='findings.csv', Body=csv_buffer.getvalue())
+
+            packs = cfg.describe_conformance_packs()['ConformancePacks']
+            report = {'Packs': packs}
+            s3.put_object(Bucket=event.get('BucketName', 'default-bucket'), Key='conformance-report.json', Body=json.dumps(report))
+
+            return {'status': 'success'}
+  MonthlyExportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(0 0 1 * ? *)
+      Targets:
+        - Arn: !GetAtt ExportLambda.Arn
+          Id: MonthlyExport
+          Input: !Sub '{"BucketName": "${SecurityLogBucket}"}'
+  ExportPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ExportLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MonthlyExportRule.Arn
+
+Outputs:
+  LogBucketARN:
+    Value: !GetAtt SecurityLogBucket.Arn
+  SNSTopicARN:
+    Value: !If [HasSNSEmails, !Ref SNSTopic, 'No SNS topic created (no emails provided)']
+  GapReportURL:
+    Value: !Sub https://${SecurityLogBucket}.s3.amazonaws.com/gap-report.json
+  ServiceStatus:
+    Value: !GetAtt EnableServicesCustomResource.Status
