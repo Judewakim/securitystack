@@ -1,0 +1,1 @@
+{"report_date": "2025-09-16T06:17:25Z", "total_packs": 2, "conformance_packs": [{"name": "AwsSecurityServicesBestPractices", "compliance_summary": "COMPLIANT"}, {"name": "CIS-AWS-Foundations-Benchmark-Level1", "compliance_summary": "COMPLIANT"}]}
