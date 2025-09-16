@@ -1,0 +1,2 @@
+Title,Severity,Description,AWS Account,Region,Resource ID,First Seen,Last Seen
+Demo Finding,HIGH,This is a demonstration finding,928459458650,us-east-1,arn:aws:demo:resource,2025-09-16T06:00:00Z,2025-09-16T06:00:00Z

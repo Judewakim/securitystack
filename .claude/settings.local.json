@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws configservice:*)",
+      "Bash(aws cloudtrail describe-trails:*)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(aws s3 ls:*)",
+      "Bash(aws cloudformation describe-stack-events:*)",
+      "Bash(aws s3 cp:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
