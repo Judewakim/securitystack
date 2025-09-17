@@ -285,6 +285,8 @@ Resources:
                   - ec2:DescribeSecurityGroups
                   - ec2:DescribeInstances
                   - rds:DescribeDBInstances
+                  - cloudtrail:DescribeTrails
+                  - guardduty:ListDetectors
                 Resource: '*'
   EnableServicesLambda:
     Type: AWS::Lambda::Function
@@ -435,7 +437,7 @@ Resources:
       CISURI: !If [EnableCISPack, !Sub 's3://${ConfigS3BucketName}/conformance-packs/cis-aws-foundations-benchmark-level1.yaml', 'none']
       BucketName: !Ref ConfigS3BucketName
       ConfigRoleArn: !GetAtt ConfigRole.Arn
-      Version: "2.6"  # Added SecurityHub and Config permissions for reporting
+      Version: "2.7"  # Fixed CloudTrail permissions for GapRemediation
   GapRemediationLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -599,7 +601,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt GapRemediationLambda.Arn
       BucketName: !Ref ConfigS3BucketName
-      Version: "2.6"  # Force execution with new report folder structure
+      Version: "2.7"  # Fixed CloudTrail permissions
     DependsOn: EnableServicesCustomResource
   SNSTopic:
     Type: AWS::SNS::Topic
