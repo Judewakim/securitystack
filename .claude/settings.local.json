@@ -6,7 +6,8 @@
       "Bash(aws cloudformation describe-stacks:*)",
       "Bash(aws s3 ls:*)",
       "Bash(aws cloudformation describe-stack-events:*)",
-      "Bash(aws s3 cp:*)"
+      "Bash(aws s3 cp:*)",
+      "Bash(aws cloudformation continue-update-rollback:*)"
     ],
     "deny": [],
     "ask": []
