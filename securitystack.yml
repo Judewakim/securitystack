@@ -284,9 +284,17 @@ Resources:
                 Action:
                   - ec2:DescribeSecurityGroups
                   - ec2:DescribeInstances
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeFlowLogs
+                  - ec2:CreateFlowLogs
                   - rds:DescribeDBInstances
                   - cloudtrail:DescribeTrails
                   - guardduty:ListDetectors
+                  - guardduty:DescribeDetector
+                  - guardduty:UpdateDetector
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - sns:Publish
                 Resource: '*'
   EnableServicesLambda:
     Type: AWS::Lambda::Function
@@ -303,7 +311,7 @@ Resources:
 
           def handler(event, context):
             response_data = {}
-            print(f"EnableServicesLambda v2.0 started. Event: {json.dumps(event)}")
+            print("EnableServicesLambda v2.0 started. Event: " + json.dumps(event))
             # Version 2.0 - CloudTrail now handled by CloudFormation, not Lambda
 
             # BULLETPROOF: Always send response, no matter what
@@ -325,25 +333,81 @@ Resources:
                   detectors = gd.list_detectors()['DetectorIds']
                   if not detectors:
                     gd.create_detector(Enable=True)
-                  response_data[f'GuardDuty_{region}'] = 'Enabled'
+                  response_data['GuardDuty_' + region] = 'Enabled'
                 else:
-                  response_data[f'GuardDuty_{region}'] = 'Skipped (OptOutGuardDuty=true)'
+                  response_data['GuardDuty_' + region] = 'Skipped (OptOutGuardDuty=true)'
               except Exception as e:
-                print(f"GuardDuty error: {str(e)}")
-                response_data[f'GuardDuty_Error_{region}'] = str(e)
+                print("GuardDuty error: " + str(e))
+                response_data['GuardDuty_Error_' + region] = str(e)
 
               # SecurityHub with individual error handling
               try:
                 sh = boto3.client('securityhub', region_name=region)
+                hub_exists = False
                 try:
                   sh.describe_hub()
-                  response_data[f'SecurityHub_{region}'] = 'Already enabled'
+                  hub_exists = True
+                  response_data['SecurityHub_' + region] = 'Already enabled'
                 except sh.exceptions.InvalidAccessException:
                   sh.enable_security_hub()
-                  response_data[f'SecurityHub_{region}'] = 'Enabled'
+                  hub_exists = True
+                  response_data['SecurityHub_' + region] = 'Enabled'
+
+                # Enable security standards if SecurityHub is available
+                if hub_exists:
+                  # Enable AWS Foundational Security Standard
+                  try:
+                    enabled_standards = sh.get_enabled_standards()['StandardsSubscriptions']
+                    aws_foundational_arn = 'arn:aws:securityhub:' + region + '::standard/aws-foundational-security-best-practices/v/1.0.0'
+                    if not any(std['StandardsArn'] == aws_foundational_arn for std in enabled_standards):
+                      sh.batch_enable_standards(StandardsSubscriptionRequests=[{
+                        'StandardsArn': aws_foundational_arn
+                      }])
+                      response_data['SecurityHub_AWSFoundational_' + region] = 'Enabled'
+                    else:
+                      response_data['SecurityHub_AWSFoundational_' + region] = 'Already enabled'
+                  except Exception as std_e:
+                    response_data['SecurityHub_AWSFoundational_Error_' + region] = str(std_e)
+
+                  # Enable CIS AWS Foundations Benchmark
+                  try:
+                    cis_arn = 'arn:aws:securityhub:' + region + '::standard/cis-aws-foundations-benchmark/v/1.2.0'
+                    if not any(std['StandardsArn'] == cis_arn for std in enabled_standards):
+                      sh.batch_enable_standards(StandardsSubscriptionRequests=[{
+                        'StandardsArn': cis_arn
+                      }])
+                      response_data['SecurityHub_CIS_' + region] = 'Enabled'
+                    else:
+                      response_data['SecurityHub_CIS_' + region] = 'Already enabled'
+                  except Exception as cis_e:
+                    response_data['SecurityHub_CIS_Error_' + region] = str(cis_e)
+
+                  # Enable GuardDuty integration
+                  try:
+                    products = sh.list_enabled_products_for_import()['ProductArns']
+                    guardduty_arn = 'arn:aws:securityhub:' + region + '::product/aws/guardduty'
+                    if guardduty_arn not in products:
+                      sh.enable_import_findings_for_product(ProductArn=guardduty_arn)
+                      response_data['SecurityHub_GuardDutyIntegration_' + region] = 'Enabled'
+                    else:
+                      response_data['SecurityHub_GuardDutyIntegration_' + region] = 'Already enabled'
+                  except Exception as gd_e:
+                    response_data['SecurityHub_GuardDutyIntegration_Error_' + region] = str(gd_e)
+
+                  # Enable Config integration
+                  try:
+                    config_arn = 'arn:aws:securityhub:' + region + '::product/aws/config'
+                    if config_arn not in products:
+                      sh.enable_import_findings_for_product(ProductArn=config_arn)
+                      response_data['SecurityHub_ConfigIntegration_' + region] = 'Enabled'
+                    else:
+                      response_data['SecurityHub_ConfigIntegration_' + region] = 'Already enabled'
+                  except Exception as cfg_e:
+                    response_data['SecurityHub_ConfigIntegration_Error_' + region] = str(cfg_e)
+
               except Exception as e:
-                print(f"SecurityHub error: {str(e)}")
-                response_data[f'SecurityHub_Error_{region}'] = str(e)
+                print("SecurityHub error: " + str(e))
+                response_data['SecurityHub_Error_' + region] = str(e)
 
               # Config with individual error handling
               try:
@@ -367,9 +431,9 @@ Resources:
                       }
                     )
                     cfg.start_configuration_recorder(ConfigurationRecorderName='SecurityConfigRecorder')
-                    response_data[f'Config_{region}'] = 'Enabled'
+                    response_data['Config_' + region] = 'Enabled'
                   else:
-                    response_data[f'Config_{region}'] = 'Already exists'
+                    response_data['Config_' + region] = 'Already exists'
 
                   if props['EnableAWSFoundational'] == 'true' and props['AWSFoundationalName'] != 'none':
                     try:
@@ -377,12 +441,12 @@ Resources:
                         ConformancePackName=props['AWSFoundationalName'],
                         TemplateS3Uri=props['AWSFoundationalURI']
                       )
-                      response_data[f'AWSFoundational_{region}'] = 'Enabled'
+                      response_data['AWSFoundational_' + region] = 'Enabled'
                     except cfg.exceptions.ResourceInUseException:
-                      response_data[f'AWSFoundational_{region}'] = 'Already exists'
+                      response_data['AWSFoundational_' + region] = 'Already exists'
                     except Exception as conf_e:
-                      print(f"Conformance pack error for AWSFoundational: {str(conf_e)}")
-                      response_data[f'AWSFoundational_Error_{region}'] = str(conf_e)
+                      print("Conformance pack error for AWSFoundational: " + str(conf_e))
+                      response_data['AWSFoundational_Error_' + region] = str(conf_e)
 
                   if props['EnableCIS'] == 'true' and props['CISName'] != 'none':
                     try:
@@ -390,31 +454,31 @@ Resources:
                         ConformancePackName=props['CISName'],
                         TemplateS3Uri=props['CISURI']
                       )
-                      response_data[f'CIS_{region}'] = 'Enabled'
+                      response_data['CIS_' + region] = 'Enabled'
                     except cfg.exceptions.ResourceInUseException:
-                      response_data[f'CIS_{region}'] = 'Already exists'
+                      response_data['CIS_' + region] = 'Already exists'
                     except Exception as conf_e:
-                      print(f"Conformance pack error for CIS: {str(conf_e)}")
-                      response_data[f'CIS_Error_{region}'] = str(conf_e)
+                      print("Conformance pack error for CIS: " + str(conf_e))
+                      response_data['CIS_Error_' + region] = str(conf_e)
                 else:
-                  response_data[f'Config_{region}'] = 'Skipped (OptOutConfig=true)'
+                  response_data['Config_' + region] = 'Skipped (OptOutConfig=true)'
               except Exception as e:
-                print(f"Config error: {str(e)}")
-                response_data[f'Config_Error_{region}'] = str(e)
+                print("Config error: " + str(e))
+                response_data['Config_Error_' + region] = str(e)
 
               # Add Status field for CloudFormation Output reference
               response_data['Status'] = 'SUCCESS'
-              print(f"Response data: {json.dumps(response_data)}")
+              print("Response data: " + json.dumps(response_data))
               cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
               print("SUCCESS response sent to CloudFormation")
 
             except Exception as e:
-              print(f"Top-level error: {str(e)}")
+              print("Top-level error: " + str(e))
               try:
                 cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e), 'Status': 'FAILED'})
                 print("FAILED response sent to CloudFormation")
               except Exception as cfn_error:
-                print(f"CRITICAL: Could not send CFN response: {str(cfn_error)}")
+                print("CRITICAL: Could not send CFN response: " + str(cfn_error))
                 # Last resort: try with minimal data
                 try:
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Status': 'FAILED'})
@@ -437,7 +501,7 @@ Resources:
       CISURI: !If [EnableCISPack, !Sub 's3://${ConfigS3BucketName}/conformance-packs/cis-aws-foundations-benchmark-level1.yaml', 'none']
       BucketName: !Ref ConfigS3BucketName
       ConfigRoleArn: !GetAtt ConfigRole.Arn
-      Version: "2.7"  # Fixed CloudTrail permissions for GapRemediation
+      Version: "2.8"  # Added SecurityHub standards and integrations
   GapRemediationLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -452,13 +516,16 @@ Resources:
           import cfnresponse
 
           def handler(event, context):
-            response_data = {'Gaps': []}
-            print(f"GapRemediationLambda v2.0 started. Event: {json.dumps(event)}")
-            # Version 2.0 - Enhanced error handling and Status field support
-
-            # BULLETPROOF: Always send response, no matter what
+            response_data = {
+              'Summary': {},
+              'AutoFixed': [],
+              'AlreadyCompliant': [],
+              'ManualAction': [],
+              'Gaps': []
+            }
+            print("GapRemediationLambda v3.0 started. Event: " + json.dumps(event))
+            
             try:
-              # Handle DELETE events - just acknowledge deletion
               if event.get('RequestType') == 'Delete':
                 print("DELETE request received - acknowledging deletion")
                 response_data['Status'] = 'SUCCESS'
@@ -466,6 +533,7 @@ Resources:
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
                 print("DELETE response sent to CloudFormation")
                 return
+              
               s3 = boto3.client('s3')
               iam = boto3.client('iam')
               ec2 = boto3.client('ec2')
@@ -473,13 +541,12 @@ Resources:
               ct = boto3.client('cloudtrail')
               gd = boto3.client('guardduty')
 
-              # 1. Public S3 buckets
+              # 1. AUTO-FIX: Public S3 buckets
               buckets = s3.list_buckets()['Buckets']
               for b in buckets:
                 try:
                   acl = s3.get_bucket_acl(Bucket=b['Name'])['Grants']
                   if any(g['Grantee']['Type'] == 'Group' and 'AllUsers' in g['Grantee'].get('URI', '') for g in acl):
-                    response_data['Gaps'].append(f'Public S3 bucket: {b["Name"]}')
                     s3.put_bucket_public_access_block(
                       Bucket=b['Name'],
                       PublicAccessBlockConfiguration={
@@ -489,84 +556,179 @@ Resources:
                         'RestrictPublicBuckets': True
                       }
                     )
-                except:
-                  pass
+                    response_data['AutoFixed'].append('Blocked public access on S3 bucket: ' + b['Name'])
+                  else:
+                    response_data['AlreadyCompliant'].append('S3 bucket ' + b['Name'] + ' already has public access blocked')
+                except Exception as s3_e:
+                  response_data['ManualAction'].append('S3 bucket ' + b['Name'] + ' public access: ' + str(s3_e))
 
-              # 2. No MFA on root/users
+              # 2. MFA Detection (Manual remediation required)
               summary = iam.get_account_summary()['SummaryMap']
               if summary.get('AccountMFAEnabled', 0) == 0:
-                response_data['Gaps'].append('No MFA on root - Manual remediation required')
+                response_data['ManualAction'].append('Root account MFA not enabled - Enable MFA on root account')
+              else:
+                response_data['AlreadyCompliant'].append('Root account MFA is enabled')
+
               users = iam.list_users()['Users']
               for u in users:
                 if not iam.list_mfa_devices(UserName=u['UserName'])['MFADevices']:
-                  response_data['Gaps'].append(f'No MFA on user: {u["UserName"]} - Manual remediation')
+                  response_data['ManualAction'].append('User ' + u['UserName'] + ' has no MFA - Enable MFA device')
+                else:
+                  response_data['AlreadyCompliant'].append('User ' + u['UserName'] + ' has MFA enabled')
 
-              # 3. Over-permissive IAM policies
+              # 3. Over-permissive IAM policies (Manual review required)
               policies = iam.list_policies(Scope='Local')['Policies']
               for p in policies:
-                doc = iam.get_policy_version(PolicyArn=p['Arn'], VersionId=p['DefaultVersionId'])['PolicyVersion']['Document']
-                if any(s.get('Effect') == 'Allow' and (s.get('Action') == '*' or s.get('Action') == ['*']) for s in doc.get('Statement', [])):
-                  response_data['Gaps'].append(f'Over-permissive policy: {p["PolicyName"]} - Review manually')
+                try:
+                  doc = iam.get_policy_version(PolicyArn=p['Arn'], VersionId=p['DefaultVersionId'])['PolicyVersion']['Document']
+                  if any(s.get('Effect') == 'Allow' and (s.get('Action') == '*' or s.get('Action') == ['*']) for s in doc.get('Statement', [])):
+                    response_data['ManualAction'].append('Over-permissive policy: ' + p['PolicyName'] + ' - Review and restrict permissions')
+                  else:
+                    response_data['AlreadyCompliant'].append('Policy ' + p['PolicyName'] + ' has appropriate permissions')
+                except:
+                  pass
 
-              # 4. Unencrypted S3 buckets
+              # 4. AUTO-FIX: Unencrypted S3 buckets
               for b in buckets:
                 try:
                   s3.get_bucket_encryption(Bucket=b['Name'])
+                  response_data['AlreadyCompliant'].append('S3 bucket ' + b['Name'] + ' encryption is enabled')
                 except s3.exceptions.ClientError as e:
                   if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
-                    response_data['Gaps'].append(f'Unencrypted S3 bucket: {b["Name"]}')
-                    s3.put_bucket_encryption(
-                      Bucket=b['Name'],
-                      ServerSideEncryptionConfiguration={
-                        'Rules': [{'ApplyServerSideEncryptionByDefault': {'SSEAlgorithm': 'AES256'}}]
-                      }
-                    )
+                    try:
+                      s3.put_bucket_encryption(
+                        Bucket=b['Name'],
+                        ServerSideEncryptionConfiguration={
+                          'Rules': [{'ApplyServerSideEncryptionByDefault': {'SSEAlgorithm': 'AES256'}}]
+                        }
+                      )
+                      response_data['AutoFixed'].append('Enabled encryption on S3 bucket: ' + b['Name'])
+                    except Exception as enc_e:
+                      response_data['ManualAction'].append('S3 bucket ' + b['Name'] + ' encryption: ' + str(enc_e))
 
-              # 5. Open security groups
+              # 5. Open security groups (Manual remediation required)
               sgs = ec2.describe_security_groups()['SecurityGroups']
               for sg in sgs:
+                open_ports = []
                 for rule in sg.get('IpPermissions', []):
                   if rule.get('FromPort') in [22, 3389] and any(ip.get('CidrIp') == '0.0.0.0/0' for ip in rule.get('IpRanges', [])):
-                    response_data['Gaps'].append(f'Open security group: {sg["GroupId"]} (port {rule["FromPort"]}) - Manual revoke')
+                    open_ports.append(str(rule['FromPort']))
+                if open_ports:
+                  response_data['ManualAction'].append('Security group ' + sg['GroupId'] + ' has open ports ' + ','.join(open_ports) + ' - Restrict access')
+                else:
+                  response_data['AlreadyCompliant'].append('Security group ' + sg['GroupId'] + ' has no overly permissive rules')
 
-              # 6. Unused IAM credentials
+              # 6. Unused IAM credentials (Manual remediation required)
               for u in users:
                 access_keys = iam.list_access_keys(UserName=u['UserName'])['AccessKeyMetadata']
                 for key in access_keys:
                   last_used = iam.get_access_key_last_used(AccessKeyId=key['AccessKeyId'])['AccessKeyLastUsed']
                   if not last_used.get('LastUsedDate'):
-                    response_data['Gaps'].append(f'Unused access key for user: {u["UserName"]} - Deactivate manually')
+                    response_data['ManualAction'].append('Unused access key for user ' + u['UserName'] + ' - Deactivate unused key')
 
-              # 7. No CloudTrail
+              # 7. CloudTrail check
               trails = ct.describe_trails()['trailList']
               if not trails:
-                response_data['Gaps'].append('No CloudTrail enabled - Already enabling via stack')
+                response_data['AlreadyCompliant'].append('CloudTrail is being enabled via this security stack')
+              else:
+                response_data['AlreadyCompliant'].append('CloudTrail is active with ' + str(len(trails)) + ' trail(s)')
 
-              # 8. No GuardDuty
+              # 8. GuardDuty check
               detectors = gd.list_detectors()['DetectorIds']
               if not detectors:
-                response_data['Gaps'].append('No GuardDuty enabled - Already enabling via stack')
+                response_data['AlreadyCompliant'].append('GuardDuty is being enabled via this security stack')
+              else:
+                response_data['AlreadyCompliant'].append('GuardDuty is active with ' + str(len(detectors)) + ' detector(s)')
 
-              # 9. Public EC2 instances
+              # 9. Public EC2 instances (Manual remediation required)
               instances = ec2.describe_instances()['Reservations']
               for res in instances:
                 for inst in res['Instances']:
-                  if inst.get('PublicIpAddress'):
-                    response_data['Gaps'].append(f'Public EC2 instance: {inst["InstanceId"]} - Make private manually')
+                  if inst.get('State', {}).get('Name') == 'running' and inst.get('PublicIpAddress'):
+                    response_data['ManualAction'].append('Public EC2 instance ' + inst['InstanceId'] + ' - Consider moving to private subnet')
 
-              # 10. Unencrypted RDS instances
-              dbs = rds.describe_db_instances()['DBInstances']
-              for db in dbs:
-                if not db.get('StorageEncrypted'):
-                  response_data['Gaps'].append(f'Unencrypted RDS instance: {db["DBInstanceIdentifier"]} - Enable encryption manually')
+              # 10. Unencrypted RDS instances (Manual remediation required)
+              try:
+                dbs = rds.describe_db_instances()['DBInstances']
+                for db in dbs:
+                  if not db.get('StorageEncrypted'):
+                    response_data['ManualAction'].append('Unencrypted RDS instance ' + db['DBInstanceIdentifier'] + ' - Enable encryption')
+                  else:
+                    response_data['AlreadyCompliant'].append('RDS instance ' + db['DBInstanceIdentifier'] + ' is encrypted')
+              except:
+                response_data['AlreadyCompliant'].append('No RDS instances found')
 
-              # Store gap analysis report in organized folder structure
+              # 11. AUTO-FIX: VPC Flow Logs (cost-free, no data processing fees for REJECT logs)
+              vpcs = ec2.describe_vpcs()['Vpcs']
+              for vpc in vpcs:
+                vpc_id = vpc['VpcId']
+                try:
+                  existing_flow_logs = ec2.describe_flow_logs(
+                    Filters=[{'Name': 'resource-id', 'Values': [vpc_id]}]
+                  )['FlowLogs']
+
+                  if not existing_flow_logs:
+                    ec2.create_flow_logs(
+                      ResourceIds=[vpc_id],
+                      ResourceType='VPC',
+                      TrafficType='REJECT',
+                      LogDestinationType='cloud-watch-logs',
+                      LogGroupName='/aws/vpc/flowlogs/' + vpc_id
+                    )
+                    response_data['AutoFixed'].append('Enabled VPC Flow Logs for ' + vpc_id)
+                  else:
+                    response_data['AlreadyCompliant'].append('VPC Flow Logs already enabled for ' + vpc_id)
+                except Exception as flow_e:
+                  response_data['ManualAction'].append('VPC Flow Logs for ' + vpc_id + ': ' + str(flow_e))
+
+              # 12. AUTO-FIX: GuardDuty Runtime Monitoring (cost-free to enable, pay-per-scan)
+              try:
+                detectors = gd.list_detectors()['DetectorIds']
+                if detectors:
+                  detector_id = detectors[0]
+                  gd.update_detector(
+                    DetectorId=detector_id,
+                    Features=[
+                      {
+                        'Name': 'RUNTIME_MONITORING',
+                        'Status': 'ENABLED',
+                        'AdditionalConfiguration': [
+                          {
+                            'Name': 'EC2_AGENT_MANAGEMENT',
+                            'Status': 'ENABLED'
+                          }
+                        ]
+                      }
+                    ]
+                  )
+                  response_data['AutoFixed'].append('Enabled GuardDuty Runtime Monitoring')
+              except Exception as gd_e:
+                response_data['ManualAction'].append('GuardDuty Runtime Monitoring: ' + str(gd_e))
+
+              # Generate summary statistics and legacy format
               from datetime import datetime
               timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
 
+              # Create summary
+              response_data['Summary'] = {
+                'timestamp': timestamp,
+                'total_issues_found': len(response_data['AutoFixed']) + len(response_data['ManualAction']),
+                'automatically_fixed': len(response_data['AutoFixed']),
+                'already_compliant': len(response_data['AlreadyCompliant']),
+                'manual_action_required': len(response_data['ManualAction']),
+                'security_score': round(((len(response_data['AlreadyCompliant']) + len(response_data['AutoFixed'])) / max(1, len(response_data['AutoFixed']) + len(response_data['ManualAction']) + len(response_data['AlreadyCompliant']))) * 100, 1)
+              }
+
+              # Populate legacy Gaps field for backward compatibility
+              for item in response_data['ManualAction']:
+                response_data['Gaps'].append(item)
+              for item in response_data['AutoFixed']:
+                response_data['Gaps'].append('AUTO-FIXED: ' + item)
+
+              # Store detailed JSON report in organized folder structure
               s3.put_object(
                 Bucket=event['ResourceProperties']['BucketName'],
-                Key=f'reports/gap-analysis/gap-report_{timestamp}.json',
+                Key='reports/gap-analysis/gap-report_' + timestamp + '.json',
                 Body=json.dumps(response_data, indent=2)
               )
 
@@ -577,20 +739,102 @@ Resources:
                 Body=json.dumps(response_data, indent=2)
               )
 
+              # Generate simple HTML report (avoiding YAML syntax conflicts)
+              html_header = '<!DOCTYPE html><html><head><title>Security Gap Analysis Report</title><style>body{font-family:Arial,sans-serif;margin:40px;background:#f5f5f5}.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;border-radius:10px;text-align:center}.summary{background:white;padding:20px;margin:20px 0;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}.section{background:white;margin:20px 0;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}.success{border-left:5px solid #28a745}.warning{border-left:5px solid #ffc107}.score{font-size:48px;font-weight:bold;color:#667eea;text-align:center}ul{list-style-type:none;padding:0}li{padding:10px;margin:5px 0;border-radius:5px}.auto-fixed{background:#d4edda;border:1px solid #c3e6cb}.compliant{background:#e2f3ff;border:1px solid #b8daff}.manual{background:#fff3cd;border:1px solid #ffeaa7}.footer{text-align:center;margin-top:40px;color:#666;font-size:12px}</style></head><body>'
+
+              html_content = html_header + '<div class="header"><h1>Security Gap Analysis Report</h1><p>Generated: ' + timestamp + '</p></div>'
+
+              html_content += '<div class="summary"><div class="score">' + str(response_data['Summary']['security_score']) + '%</div><p style="text-align:center;font-size:18px;color:#666">Overall Security Score</p><div style="display:flex;justify-content:space-around;text-align:center;margin-top:20px"><div><strong>' + str(response_data['Summary']['automatically_fixed']) + '</strong><br>Auto-Fixed</div><div><strong>' + str(response_data['Summary']['already_compliant']) + '</strong><br>Compliant</div><div><strong>' + str(response_data['Summary']['manual_action_required']) + '</strong><br>Action Needed</div></div></div>'
+
+              html_content += '<div class="section success"><h3>Automatically Fixed (' + str(len(response_data['AutoFixed'])) + ' items)</h3><ul>'
+              for item in response_data['AutoFixed']:
+                html_content += '<li class="auto-fixed">✅ ' + item + '</li>'
+              html_content += '</ul></div>'
+
+              html_content += '<div class="section success"><h3>Already Compliant (' + str(len(response_data['AlreadyCompliant'])) + ' items)</h3><ul>'
+              for item in response_data['AlreadyCompliant']:
+                html_content += '<li class="compliant">ℹ️ ' + item + '</li>'
+              html_content += '</ul></div>'
+
+              if response_data['ManualAction']:
+                html_content += '<div class="section warning"><h3>Manual Action Required (' + str(len(response_data['ManualAction'])) + ' items)</h3><ul>'
+                for item in response_data['ManualAction']:
+                  html_content += '<li class="manual">⚠️ ' + item + '</li>'
+                html_content += '</ul></div>'
+
+              html_content += '<div class="footer"><p>This report was automatically generated by your Security Stack.<br>For detailed technical information, view the JSON report: gap-report_' + timestamp + '.json</p></div></body></html>'
+
+              # Store HTML report
+              s3.put_object(
+                Bucket=event['ResourceProperties']['BucketName'],
+                Key='reports/gap-analysis/gap-report_' + timestamp + '.html',
+                Body=html_content,
+                ContentType='text/html'
+              )
+
+              # Store latest HTML report
+              s3.put_object(
+                Bucket=event['ResourceProperties']['BucketName'],
+                Key='reports/gap-analysis/gap-report_latest.html',
+                Body=html_content,
+                ContentType='text/html'
+              )
+
+              # Send enhanced gap analysis report via email (SNS)
+              sns_topic_arn = event['ResourceProperties'].get('SNSTopicARN')
+              if sns_topic_arn and sns_topic_arn != 'No SNS topic created (no emails provided)':
+                try:
+                  sns = boto3.client('sns')
+
+                  subject = "🔒 Security Analysis Complete - " + str(response_data['Summary']['security_score']) + "% Score"
+
+                  message = "SECURITY GAP ANALYSIS REPORT\\n"
+                  message += "Generated: " + timestamp + "\\n"
+                  message += "Security Score: " + str(response_data['Summary']['security_score']) + "%\\n\\n"
+                  message += "=== SUMMARY ===\\n"
+                  message += "✅ Auto-Fixed: " + str(response_data['Summary']['automatically_fixed']) + " issues\\n"
+                  message += "ℹ️  Already Compliant: " + str(response_data['Summary']['already_compliant']) + " items\\n"
+                  message += "⚠️  Manual Action Required: " + str(response_data['Summary']['manual_action_required']) + " items\\n\\n"
+                  message += "=== AUTOMATICALLY FIXED ===\\n"
+
+                  for item in response_data['AutoFixed']:
+                    message += "\\n✅ " + item
+
+                  if response_data['ManualAction']:
+                    message += "\\n\\n=== MANUAL ACTION REQUIRED ==="
+                    for item in response_data['ManualAction']:
+                      message += "\\n⚠️  " + item
+
+                  message += "\\n\\n=== DETAILED REPORTS ===\\n"
+                  message += "📊 HTML Report: https://" + event['ResourceProperties']['BucketName'] + ".s3.amazonaws.com/reports/gap-analysis/gap-report_" + timestamp + ".html\\n"
+                  message += "📄 JSON Report: https://" + event['ResourceProperties']['BucketName'] + ".s3.amazonaws.com/reports/gap-analysis/gap-report_" + timestamp + ".json\\n\\n"
+                  message += "This analysis runs automatically during stack deployments and updates.\\n"
+                  message += "For the most current status, view the HTML report above."
+
+                  sns.publish(
+                    TopicArn=sns_topic_arn,
+                    Subject=subject,
+                    Message=message
+                  )
+                  print("Enhanced gap analysis report sent via SNS to " + sns_topic_arn)
+                except Exception as sns_e:
+                  print("Failed to send gap analysis email: " + str(sns_e))
+              else:
+                print("No SNS topic configured - gap analysis email not sent")
+
               # Add Status field for CloudFormation Output reference
               response_data['Status'] = 'SUCCESS'
-              print(f"GapRemediation response data: {json.dumps(response_data)}")
+              print("GapRemediation response data: " + json.dumps(response_data))
               cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
               print("GapRemediation SUCCESS response sent to CloudFormation")
 
             except Exception as e:
-              print(f"GapRemediation top-level error: {str(e)}")
+              print("GapRemediation top-level error: " + str(e))
               try:
                 cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e), 'Status': 'FAILED'})
                 print("GapRemediation FAILED response sent to CloudFormation")
               except Exception as cfn_error:
-                print(f"CRITICAL: GapRemediation could not send CFN response: {str(cfn_error)}")
-                # Last resort: try with minimal data
+                print("CRITICAL: GapRemediation could not send CFN response: " + str(cfn_error))
                 try:
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Status': 'FAILED'})
                   print("GapRemediation minimal FAILED response sent")
@@ -601,7 +845,8 @@ Resources:
     Properties:
       ServiceToken: !GetAtt GapRemediationLambda.Arn
       BucketName: !Ref ConfigS3BucketName
-      Version: "2.7"  # Fixed CloudTrail permissions
+      SNSTopicARN: !If [HasSNSEmails, !Ref SNSTopic, 'No SNS topic created (no emails provided)']
+      Version: "3.0"  # Enhanced reporting with HTML output and fixed API errors
     DependsOn: EnableServicesCustomResource
   SNSTopic:
     Type: AWS::SNS::Topic
@@ -690,7 +935,7 @@ Resources:
             # Store findings report in organized monthly folder
             s3.put_object(
               Bucket=bucket_name,
-              Key=f'reports/monthly/{timestamp}/findings.csv',
+              Key='reports/monthly/' + timestamp + '/findings.csv',
               Body=csv_buffer.getvalue()
             )
 
@@ -719,7 +964,7 @@ Resources:
                   'name': pack['ConformancePackName'],
                   'arn': pack['ConformancePackArn'],
                   'last_update': pack['LastUpdateRequestedTime'].isoformat(),
-                  'compliance_summary': f'Error retrieving compliance: {str(e)}'
+                  'compliance_summary': 'Error retrieving compliance: ' + str(e)
                 }
 
               compliance_report['conformance_packs'].append(pack_info)
@@ -727,7 +972,7 @@ Resources:
             # Store conformance report in organized monthly folder
             s3.put_object(
               Bucket=bucket_name,
-              Key=f'reports/monthly/{timestamp}/conformance-report.json',
+              Key='reports/monthly/' + timestamp + '/conformance-report.json',
               Body=json.dumps(compliance_report, indent=2, default=str)
             )
 
@@ -744,15 +989,15 @@ Resources:
                 'pack_names': [pack['ConformancePackName'] for pack in packs]
               },
               'report_locations': {
-                'detailed_findings': f'reports/monthly/{timestamp}/findings.csv',
-                'conformance_details': f'reports/monthly/{timestamp}/conformance-report.json',
+                'detailed_findings': 'reports/monthly/' + timestamp + '/findings.csv',
+                'conformance_details': 'reports/monthly/' + timestamp + '/conformance-report.json',
                 'gap_analysis': 'reports/gap-analysis/gap-report_latest.json'
               }
             }
 
             s3.put_object(
               Bucket=bucket_name,
-              Key=f'reports/monthly/{timestamp}/executive-summary.json',
+              Key='reports/monthly/' + timestamp + '/executive-summary.json',
               Body=json.dumps(summary_report, indent=2, default=str)
             )
 
