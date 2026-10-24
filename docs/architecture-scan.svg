@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">SecurityStack free scan architecture</title>
+  <desc id="d">The hosted free scan: a static site and API behind CloudFront, an async worker that assumes a read-only role in the visitor's account using a per-scan External ID.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#14213d"/></marker>
+    <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f6e8c"/></marker>
+    <style>
+      .frame{fill:#f3f5f7;stroke:#14213d;stroke-width:2}
+      .visitor{fill:#fff;stroke:#b9500b;stroke-width:2}
+      .svc{fill:#fff;stroke:#14213d;stroke-width:1.6}
+      .hub{fill:#e6f2f6;stroke:#0f6e8c;stroke-width:2}
+      .store{fill:#fff7e6;stroke:#8a6a00;stroke-width:1.6}
+      .h{font-size:20px;font-weight:750;fill:#14213d}
+      .n{font-size:14px;font-weight:650;fill:#14213d}
+      .s{font-size:12px;fill:#4b5568}
+      .l{fill:none;stroke:#14213d;stroke-width:1.6}
+      .lt{fill:none;stroke:#0f6e8c;stroke-width:2}
+      .ld{fill:none;stroke:#0f6e8c;stroke-width:2;stroke-dasharray:7 5}
+      .lab{font-size:12px;fill:#0f6e8c;font-weight:600}
+    </style>
+  </defs>
+
+  <!-- Visitor -->
+  <rect x="20" y="40" width="190" height="90" rx="10" class="svc"/>
+  <text x="38" y="72" class="n">Visitor's browser</text>
+  <text x="38" y="92" class="s">static app, strict CSP,</text>
+  <text x="38" y="108" class="s">no keys ever entered</text>
+
+  <!-- Vendor account -->
+  <rect x="250" y="10" width="620" height="620" rx="14" class="frame"/>
+  <text x="272" y="44" class="h">SecurityStack scan service</text>
+
+  <rect x="275" y="65" width="200" height="70" rx="10" class="hub"/>
+  <text x="292" y="92" class="n">CloudFront</text>
+  <text x="292" y="111" class="s">HTTPS, security headers</text>
+  <path d="M210 85 H273" class="lt" marker-end="url(#at)"/>
+
+  <rect x="560" y="65" width="280" height="70" rx="10" class="store"/>
+  <text x="577" y="92" class="n">Site bucket (S3)</text>
+  <text x="577" y="111" class="s">private, origin access control</text>
+  <path d="M475 100 H558" class="l" marker-end="url(#a)"/>
+  <text x="490" y="92" class="lab">/</text>
+
+  <rect x="275" y="190" width="200" height="70" rx="10" class="svc"/>
+  <text x="292" y="217" class="n">API Gateway</text>
+  <text x="292" y="236" class="s">HTTP API, throttled</text>
+  <path d="M375 135 V188" class="l" marker-end="url(#a)"/>
+  <text x="383" y="167" class="lab">/api/*</text>
+
+  <rect x="275" y="310" width="200" height="70" rx="10" class="svc"/>
+  <text x="292" y="337" class="n">API function</text>
+  <text x="292" y="356" class="s">sessions, External IDs</text>
+  <path d="M375 260 V308" class="l" marker-end="url(#a)"/>
+
+  <rect x="560" y="190" width="280" height="70" rx="10" class="store"/>
+  <text x="577" y="217" class="n">DynamoDB</text>
+  <text x="577" y="236" class="s">scan sessions, expire after 24h</text>
+  <path d="M475 330 H515 V225 H558" class="l" marker-end="url(#a)"/>
+
+  <rect x="275" y="440" width="200" height="80" rx="10" class="hub"/>
+  <text x="292" y="467" class="n">Scan worker</text>
+  <text x="292" y="486" class="s">async, 10 concurrent max</text>
+  <text x="292" y="502" class="s">18 checks, all regions</text>
+  <path d="M375 380 V438" class="lt" marker-end="url(#at)"/>
+  <text x="383" y="414" class="lab">invoke (async)</text>
+
+  <rect x="560" y="310" width="280" height="70" rx="10" class="store"/>
+  <text x="577" y="337" class="n">Results bucket (S3)</text>
+  <text x="577" y="356" class="s">private, deleted after 1 day</text>
+  <path d="M475 470 H530 V360 H558" class="l" marker-end="url(#a)"/>
+
+  <rect x="560" y="440" width="280" height="80" rx="10" class="store"/>
+  <text x="577" y="467" class="n">Templates bucket (S3)</text>
+  <text x="577" y="486" class="s">public read on templates/ only,</text>
+  <text x="577" y="502" class="s">for Launch Stack links</text>
+
+  <text x="275" y="590" class="s">Every stack passes cdk-nag (AWS Solutions rules); each exception has a written reason in the code.</text>
+
+  <!-- Visitor account -->
+  <rect x="910" y="10" width="270" height="620" rx="14" class="frame" style="stroke:#b9500b"/>
+  <text x="930" y="44" class="h">Visitor's AWS account</text>
+
+  <rect x="930" y="190" width="230" height="110" rx="10" class="visitor"/>
+  <text x="947" y="217" class="n">SecurityStackScanRole</text>
+  <text x="947" y="238" class="s">AWS SecurityAudit policy:</text>
+  <text x="947" y="254" class="s">read settings, change nothing</text>
+  <text x="947" y="270" class="s">trusts only the scan worker,</text>
+  <text x="947" y="286" class="s">only with this scan's External ID</text>
+
+  <path d="M375 520 V545 H893 V245 H928" class="lt" marker-end="url(#at)"/>
+  <text x="884" y="430" class="lab" text-anchor="middle" transform="rotate(-90 884 430)">sts:AssumeRole + External ID</text>
+
+  <rect x="930" y="360" width="230" height="80" rx="10" class="svc"/>
+  <text x="947" y="387" class="n">Read-only API calls</text>
+  <text x="947" y="406" class="s">IAM, S3, EC2, RDS, GuardDuty,</text>
+  <text x="947" y="422" class="s">Security Hub, Config, Inspector…</text>
+  <path d="M1045 300 V358" class="l" marker-end="url(#a)"/>
+
+  <rect x="930" y="480" width="230" height="80" rx="10" class="svc"/>
+  <text x="947" y="507" class="n">CloudFormation</text>
+  <text x="947" y="526" class="s">creates the role, and later</text>
+  <text x="947" y="542" class="s">the SecurityStack baseline</text>
+  <path d="M840 520 H928" class="ld" marker-end="url(#at)"/>
+  <path d="M1160 520 H1172 V250 H1162" class="l" marker-end="url(#a)"/>
+</svg>

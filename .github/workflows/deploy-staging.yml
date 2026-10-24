@@ -1,0 +1,59 @@
+name: Deploy to staging
+
+# Manual only. Deploys the baseline and the scan service to the staging account
+# using GitHub OIDC (no stored AWS keys). One-time setup: docs/deploying.md.
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_baseline:
+        description: Deploy the SecurityStack baseline into the staging account too
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write   # needed to request the OIDC token for AWS
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          npm install -g aws-cdk@2
+      - name: Test
+        run: pytest -q
+      - name: Build release templates (uploaded to the templates bucket by the service stack)
+        run: python scripts/build_release.py
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy scan service
+        run: >-
+          cdk deploy SecurityStackScanService --require-approval never
+          -c withService=true -c homeRegion=${{ env.AWS_REGION }}
+          ${{ vars.DOMAIN_NAME && format('-c domainName={0}', vars.DOMAIN_NAME) || '' }}
+          ${{ vars.CERTIFICATE_ARN && format('-c certificateArn={0}', vars.CERTIFICATE_ARN) || '' }}
+      - name: Deploy baseline
+        if: ${{ inputs.deploy_baseline }}
+        run: >-
+          cdk deploy SecurityStackHome --require-approval never
+          -c homeRegion=${{ env.AWS_REGION }}
+          --parameters AlertEmail=${{ vars.ALERT_EMAIL }}

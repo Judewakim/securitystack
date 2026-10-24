@@ -31,7 +31,7 @@ jobs:
       - name: Build one-click release templates
         run: python scripts/build_release.py
       - name: Lint release templates
-        run: cfn-lint --ignore-checks W3005 -- dist/*.template.json templates/*.yaml
+        run: cfn-lint --ignore-checks W3005 -- dist/*.template.json templates/*.yaml infra/*.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: release-templates
