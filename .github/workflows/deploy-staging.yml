@@ -55,9 +55,22 @@ jobs:
           -c withService=true -c homeRegion=${{ env.AWS_REGION }}
           ${{ vars.DOMAIN_NAME && format('-c domainName={0}', vars.DOMAIN_NAME) || '' }}
           ${{ vars.CERTIFICATE_ARN && format('-c certificateArn={0}', vars.CERTIFICATE_ARN) || '' }}
-      - name: Deploy baseline
+          --outputs-file service-outputs.json
+      - name: Deploy baseline (switches off services the account already runs)
         if: ${{ inputs.deploy_baseline }}
-        run: >-
-          cdk deploy SecurityStackHome --require-approval never
-          -c homeRegion=${{ env.AWS_REGION }}
-          --parameters "AlertEmail=$ALERT_EMAIL"
+        run: |
+          PARAMS=$(python scripts/preflight.py --region "$AWS_REGION" --stack SecurityStackHome)
+          # shellcheck disable=SC2086  # PARAMS is a list of flags
+          cdk deploy SecurityStackHome --require-approval never \
+            -c homeRegion="$AWS_REGION" $PARAMS \
+            --parameters "SecurityStackHome:AlertEmail=$ALERT_EMAIL" \
+            --outputs-file baseline-outputs.json
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy outputs"
+            for f in service-outputs.json baseline-outputs.json; do
+              [ -f "$f" ] && { echo "### $f"; echo '```json'; cat "$f"; echo '```'; }
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

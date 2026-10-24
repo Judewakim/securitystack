@@ -68,7 +68,7 @@ GuardDuty and Security Hub have 30-day free trials, and Inspector has 15 days, s
 - **CDK as the source of truth.** Reusable `RegionalBaseline` and `HomeBaseline` constructs are composed into two stacks. The release build uses the `BootstraplessSynthesizer` and inline Lambda code, so the published templates have **no S3 assets**: a customer can launch them without installing or bootstrapping CDK.
 - **Native resources first.** A Lambda custom resource is used only where CloudFormation has no resource type (Inspector, plus the two opt-in fixes). It reports real failures to CloudFormation, and on delete it only undoes what it did.
 - **Security checks on the infrastructure itself.** [cdk-nag](https://github.com/cdklabs/cdk-nag) AWS Solutions rules run on every synth, and synth fails on any finding. Every exception has a written reason next to the code.
-- **Tests that don't need AWS.** 76 tests, covering template assertions, the Lambdas, the scanner against a simulated insecure account ([moto](https://github.com/getmoto/moto)), and the full scan API flow including abuse cases.
+- **Tests that don't need AWS.** 80 tests, covering template assertions, the Lambdas, the scanner against a simulated insecure account ([moto](https://github.com/getmoto/moto)), and the full scan API flow including abuse cases.
 - **The web app has no dependencies.** Plain HTML, CSS and JavaScript under a strict Content-Security-Policy. API data is only ever written with `textContent`, and outgoing links are checked against the AWS console origin.
 
 ### What changed from v1
@@ -79,7 +79,7 @@ v1 was a hand-written template. It reported success even when services failed to
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                 # 76 tests, no AWS access needed
+pytest                                 # 80 tests, no AWS access needed
 npx cdk synth -c withService=true      # all stacks, with cdk-nag
 python3 scripts/build_release.py       # one-click templates into dist/
 python3 scripts/dev_server.py          # web app with a fake API at localhost:8000
