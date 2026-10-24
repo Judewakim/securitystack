@@ -39,6 +39,8 @@ from constructs import Construct
 from .constructs._util import RUNTIME
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKER_ROLE_NAME = "SecurityStackScanWorker"
+PLACEHOLDER_ARN = "arn:aws:iam::000000000000:role/SecurityStackScanWorker"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -71,7 +73,8 @@ class ScanServiceStack(Stack):
             partition_key=dynamodb.Attribute(name="scanId", type=dynamodb.AttributeType.STRING),
             billing=dynamodb.Billing.on_demand(),
             time_to_live_attribute="ttl",
-            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(point_in_time_recovery_enabled=True),
+            # No point-in-time backups: scan sessions must really be gone within ~48h.
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(point_in_time_recovery_enabled=False),
             removal_policy=RemovalPolicy.DESTROY,
         )
 
@@ -109,7 +112,14 @@ class ScanServiceStack(Stack):
             actions=["s3:GetObject"],
             resources=[templates.arn_for_objects("templates/*")],
         ))
-        template_sources = [s3deploy.Source.asset(str(ROOT / "templates"))]
+        # The scan-role template trusts exactly this deployment's worker role. The ARN
+        # is written into the published file, never left as a parameter, so the
+        # trusted template can't be reused to grant access to anyone else.
+        worker_role_arn = f"arn:{Aws.PARTITION}:iam::{Aws.ACCOUNT_ID}:role/{WORKER_ROLE_NAME}"
+        scan_role_body = (ROOT / "templates" / "scan-role.yaml").read_text(encoding="utf-8")
+        assert PLACEHOLDER_ARN in scan_role_body, "scan-role.yaml must contain the placeholder principal"
+        scan_role_body = scan_role_body.replace(PLACEHOLDER_ARN, worker_role_arn)
+        template_sources = [s3deploy.Source.data("scan-role.yaml", scan_role_body)]
         if (ROOT / "dist").is_dir():  # release templates (built by scripts/build_release.py)
             template_sources.append(s3deploy.Source.asset(str(ROOT / "dist")))
         s3deploy.BucketDeployment(
@@ -124,7 +134,7 @@ class ScanServiceStack(Stack):
         worker_logs = logs.LogGroup(self, "WorkerLogs", retention=logs.RetentionDays.THREE_MONTHS, removal_policy=RemovalPolicy.DESTROY)
         worker_role = iam.Role(
             self, "WorkerRole",
-            role_name="SecurityStackScanWorker",  # customers' scan roles trust this exact ARN
+            role_name=WORKER_ROLE_NAME,  # customers' scan roles trust this exact ARN
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             description="Assumes visitors' read-only SecurityStackScanRole (with External ID) to run a scan.",
         )
@@ -137,7 +147,9 @@ class ScanServiceStack(Stack):
             self, "Worker",
             runtime=RUNTIME, handler="worker.handler", code=service_code,
             timeout=Duration.minutes(10), memory_size=1024, role=worker_role, log_group=worker_logs,
-            reserved_concurrent_executions=10,  # caps cost and blast radius
+            # Optional cap (-c workerConcurrency=5). Off by default: accounts with the
+            # default concurrency quota of 10 can't reserve any.
+            reserved_concurrent_executions=int(c) if (c := self.node.try_get_context("workerConcurrency")) else None,
             environment={
                 "TABLE_NAME": table.table_name,
                 "RESULTS_BUCKET": results.bucket_name,
@@ -159,7 +171,6 @@ class ScanServiceStack(Stack):
                 "TABLE_NAME": table.table_name,
                 "RESULTS_BUCKET": results.bucket_name,
                 "WORKER_FUNCTION": worker.function_name,
-                "WORKER_ROLE_ARN": worker_role.role_arn,
                 "SCAN_ROLE_TEMPLATE_URL": f"{templates_base}/scan-role.yaml",
             },
             description="SecurityStack: free-scan API",
@@ -253,6 +264,9 @@ class ScanServiceStack(Stack):
         NagSuppressions.add_resource_suppressions(worker_role, [
             {"id": "AwsSolutions-IAM5", "reason": "Scan roles live in visitors' accounts (unknown account IDs); the name prefix and per-scan External ID restrict which roles can be assumed. Other wildcards are CDK grants scoped to this stack's table, bucket prefix and log group."},
         ], apply_to_children=True)
+        NagSuppressions.add_stack_suppressions(self, [
+            {"id": "AwsSolutions-DDB3", "reason": "Scan sessions are deliberately short-lived (24h TTL); backups would keep visitors' data for 35 days."},
+        ])
         NagSuppressions.add_resource_suppressions(api_role, [
             {"id": "AwsSolutions-IAM5", "reason": "CDK-generated grants scoped to this stack's table, results/ prefix and worker function versions."},
         ], apply_to_children=True)
@@ -262,7 +276,7 @@ class ScanServiceStack(Stack):
         ], apply_to_children=True)
         NagSuppressions.add_resource_suppressions(distribution, [
             {"id": "AwsSolutions-CFR1", "reason": "Free scan is offered worldwide; no geo restriction."},
-            {"id": "AwsSolutions-CFR2", "reason": "WAF (~$5+/month) deferred until there is traffic; API Gateway throttling and reserved worker concurrency cap abuse."},
+            {"id": "AwsSolutions-CFR2", "reason": "WAF (~$5+/month) deferred until there is traffic; API Gateway throttling plus per-IP limits in the API cap abuse."},
             {"id": "AwsSolutions-CFR4", "reason": "TLSv1.2_2021 is set; the rule also fires when no custom domain is configured (default CloudFront certificate)."},
         ], apply_to_children=True)
         NagSuppressions.add_resource_suppressions(http_api, [

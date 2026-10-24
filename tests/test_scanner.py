@@ -165,8 +165,76 @@ def test_exposed_ports(rule, expected):
         assert out == expected
 
 
-def test_admin_policy_detection_ignores_conditions_and_notaction():
-    assert checks._grants_full_admin(ADMIN_DOC)
-    assert not checks._grants_full_admin({"Statement": [{"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}]})
-    assert not checks._grants_full_admin({"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*", "Condition": {"Bool": {"aws:MultiFactorAuthPresent": "true"}}}]})
-    assert not checks._grants_full_admin({"Statement": {"Effect": "Allow", "Action": "s3:*", "Resource": "*"}})
+# ---- review fixes: no false passes -------------------------------------------------
+
+
+def test_admin_detection_flags_conditions_and_notaction():
+    cond = {"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*", "Condition": {"Bool": {"aws:SecureTransport": "true"}}}]}
+    assert "with conditions" in checks._grants_full_admin(cond)
+    assert "except iam:*" in checks._grants_full_admin({"Statement": [{"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}]})
+    assert checks._grants_full_admin({"Statement": {"Effect": "Allow", "Action": "s3:*", "Resource": "*"}}) is None
+    assert checks._grants_full_admin({"Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*"}]}) is None
+
+
+@pytest.mark.parametrize("cidr,open_", [("0.0.0.0/0", True), ("0.0.0.0/1", True), ("10.0.0.0/8", False), ("8.0.0.0/7", True),
+                                        ("10.0.0.0/9", False), ("::/0", True), ("2001:db8::/32", False)])
+def test_wide_cidrs_count_as_open(cidr, open_):
+    assert checks._is_open(cidr) is open_
+
+
+def test_bucket_access_denied_is_unknown_not_private(insecure_account, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    real = checks._bucket_public_reason
+
+    def deny(s3, name):
+        if name == "private-stuff":
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "GetBucketAcl")
+        return real(s3, name)
+
+    monkeypatch.setattr(checks, "_bucket_public_reason", deny)
+    r = fresh_results()
+    checks.check_s3(boto3.Session(), r, "123456789012")
+    assert r["s3-public-buckets"].status == "FAIL"  # the real public bucket still fails
+    assert "private-stuff: AccessDenied" in r["s3-public-buckets"].note
+    r2 = fresh_results()
+    monkeypatch.setattr(checks, "_bucket_public_reason", lambda s3, name: (_ for _ in ()).throw(
+        ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "GetBucketAcl")))
+    checks.check_s3(boto3.Session(), r2, "123456789012")
+    assert r2["s3-public-buckets"].status == "UNKNOWN"
+
+
+def test_region_crash_marks_regional_checks_unknown_not_pass(insecure_account, monkeypatch):
+    import scanner.runner as runner
+
+    def boom(session, region, results):
+        raise ConnectionError("endpoint unreachable")
+
+    monkeypatch.setattr(runner.checks, "check_region", boom)
+    result = run_scan(boto3.Session(), home_region="us-east-1", regions=["us-east-1"])
+    by_id = {c["id"]: c for c in result["checks"]}
+    for cid in runner.REGIONAL_CHECKS:
+        assert by_id[cid]["status"] == "UNKNOWN", cid
+
+
+def test_global_check_crash_is_unknown(insecure_account, monkeypatch):
+    monkeypatch.setattr(checks, "check_identity", lambda *a: (_ for _ in ()).throw(TimeoutError()))
+    result = run_scan(boto3.Session(), home_region="us-east-1", regions=["us-east-1"])
+    by_id = {c["id"]: c for c in result["checks"]}
+    assert by_id["root-mfa"]["status"] == "UNKNOWN" and by_id["admin-policies"]["status"] == "UNKNOWN"
+
+
+def test_cloudtrail_without_management_events_fails():
+    assert checks._logs_management_events({"EventSelectors": [{"IncludeManagementEvents": True, "ReadWriteType": "All"}]})
+    assert not checks._logs_management_events({"EventSelectors": [{"IncludeManagementEvents": False}]})
+    assert not checks._logs_management_events({"EventSelectors": [{"IncludeManagementEvents": True, "ReadWriteType": "ReadOnly"}]})
+    assert checks._logs_management_events({"AdvancedEventSelectors": [{"FieldSelectors": [{"Field": "eventCategory", "Equals": ["Management"]}]}]})
+
+
+def test_unknown_trail_does_not_create_duplicate():
+    url = baseline_launch_url("https://b/t.json", "us-east-1", {}, None)
+    assert "param_CreateTrail=false" in url
+
+
+def test_legacy_eu_bucket_location_maps_to_region():
+    assert checks.LEGACY_S3_LOCATIONS["EU"] == "eu-west-1"

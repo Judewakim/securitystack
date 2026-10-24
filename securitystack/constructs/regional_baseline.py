@@ -123,6 +123,27 @@ class RegionalBaseline(Construct):
             managed_policy_arns=[f"arn:{Aws.PARTITION}:iam::aws:policy/service-role/AWS_ConfigRole"],
             description="Lets AWS Config record resource configuration (SecurityStack).",
         )
+        # AWS_ConfigRole has no S3 write access; for same-account delivery Config
+        # writes with this role, so grant exactly the log bucket prefix it needs.
+        bucket_arn = f"arn:{Aws.PARTITION}:s3:::{config_bucket_name}"
+        config_delivery = iam.CfnPolicy(
+            self,
+            "ConfigDeliveryPolicy",
+            policy_name="SecurityStackConfigDelivery",
+            roles=[config_role.ref],
+            policy_document={
+                "Version": "2012-10-17",
+                "Statement": [
+                    {"Effect": "Allow", "Action": ["s3:GetBucketAcl", "s3:ListBucket"], "Resource": bucket_arn},
+                    {
+                        "Effect": "Allow",
+                        "Action": "s3:PutObject",
+                        "Resource": f"{bucket_arn}/config/AWSLogs/{Aws.ACCOUNT_ID}/Config/*",
+                        "Condition": {"StringLike": {"s3:x-amz-acl": "bucket-owner-full-control"}},
+                    },
+                ],
+            },
+        )
         recorder = config.CfnConfigurationRecorder(
             self,
             "Recorder",
@@ -144,7 +165,8 @@ class RegionalBaseline(Construct):
             ),
         )
         channel.add_resource_dependency(recorder)
-        apply_condition(c_config, config_role, recorder, channel)
+        channel.add_resource_dependency(config_delivery)
+        apply_condition(c_config, config_role, config_delivery, recorder, channel)
 
         # --- IAM Access Analyzer: flags resources shared outside the account -------
         analyzer = accessanalyzer.CfnAnalyzer(self, "AccessAnalyzer", type="ACCOUNT")
@@ -214,6 +236,11 @@ class RegionalBaseline(Construct):
                 }
             ],
             apply_to_children=True,
+        )
+        NagSuppressions.add_resource_suppressions(
+            config_delivery,
+            [{"id": "AwsSolutions-IAM5", "reason": "Config writes one object per snapshot under its own AWSLogs/<account>/Config/ prefix; the wildcard is scoped to that prefix only.",
+              "appliesTo": [{"regex": "/^Resource::arn:<AWS::Partition>:s3:::<.*>/config/AWSLogs/<AWS::AccountId>/Config/\\*$/"}]}],
         )
         NagSuppressions.add_resource_suppressions(
             config_role,

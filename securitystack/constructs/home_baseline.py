@@ -56,7 +56,7 @@ class HomeBaseline(Construct):
             "LogRetentionDays",
             type="Number",
             default=365,
-            min_value=90,
+            min_value=120,
             max_value=3650,
             description="Days to keep CloudTrail and Config logs before deletion (moved to cheaper storage after 30/90 days).",
         )
@@ -176,7 +176,7 @@ class HomeBaseline(Construct):
         alert_rule = events.Rule(
             self,
             "HighSeverityAlertRule",
-            description="SecurityStack: email new, active HIGH/CRITICAL Security Hub findings",
+            description="SecurityStack: new, active, failing HIGH/CRITICAL Security Hub findings",
             event_pattern=events.EventPattern(
                 source=["aws.securityhub"],
                 detail_type=["Security Hub Findings - Imported"],
@@ -208,23 +208,33 @@ class HomeBaseline(Construct):
                 },
             ),
         )
-        message = events.RuleTargetInput.from_multiline_text(
-            "SecurityStack alert ("
-            + events.EventField.from_path("$.detail.findings[0].Severity.Label")
-            + ")\n\n"
-            + events.EventField.from_path("$.detail.findings[0].Title")
-            + "\n\nAccount: "
-            + events.EventField.from_path("$.detail.findings[0].AwsAccountId")
-            + "\nRegion: "
-            + events.EventField.from_path("$.detail.findings[0].Region")
-            + "\nResource: "
-            + events.EventField.from_path("$.detail.findings[0].Resources[0].Id")
-            + "\n\nWhat it means: "
-            + events.EventField.from_path("$.detail.findings[0].Description")
-            + "\n\nOpen Security Hub in the AWS console to see full details and remediation steps."
+        alerter_logs = logs.LogGroup(self, "AlerterLogs", retention=logs.RetentionDays.ONE_YEAR)
+        alerter_role = iam.Role(
+            self, "AlerterRole", assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            description="SecurityStack alerts: email a finding once, then mark it NOTIFIED.",
+        )
+        alerter_logs.grant_write(alerter_role)
+        self.topic.grant_publish(alerter_role)
+        alerter_role.add_to_policy(iam.PolicyStatement(actions=["securityhub:BatchUpdateFindings"], resources=["*"]))
+        alerter = lambda_.Function(
+            self,
+            "AlerterFunction",
+            runtime=RUNTIME,
+            handler="index.handler",
+            code=lambda_.Code.from_inline(inline_source("alerter")),
+            timeout=Duration.seconds(30),
+            role=alerter_role,
+            log_group=alerter_logs,
+            environment={"TOPIC_ARN": self.topic.topic_arn},
+            description="SecurityStack: send one email per new HIGH/CRITICAL finding",
         )
         for rule in (alert_rule, threat_rule):
-            rule.add_target(targets.SnsTopic(self.topic, message=message))
+            rule.add_target(targets.LambdaFunction(alerter, retry_attempts=2))
+        NagSuppressions.add_resource_suppressions(
+            alerter_role,
+            [{"id": "AwsSolutions-IAM5", "reason": "securityhub:BatchUpdateFindings does not support resource-level permissions.", "appliesTo": ["Resource::*"]}],
+            apply_to_children=True,
+        )
 
         # --- Weekly digest -------------------------------------------------------------
         digest_logs = logs.LogGroup(self, "DigestLogs", retention=logs.RetentionDays.ONE_YEAR)
@@ -273,7 +283,7 @@ class HomeBaseline(Construct):
         )
         NagSuppressions.add_resource_suppressions(
             self.topic,
-            [{"id": "AwsSolutions-SNS2", "reason": "Messages contain finding titles only. A customer-managed KMS key would add cost; the AWS-managed SNS key cannot be used with EventBridge targets."}],
+            [{"id": "AwsSolutions-SNS2", "reason": "Messages contain finding summaries only, and a customer-managed KMS key would add a fixed monthly cost for every customer."}],
         )
         NagSuppressions.add_resource_suppressions(
             digest_role,

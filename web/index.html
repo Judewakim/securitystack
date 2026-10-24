@@ -43,10 +43,10 @@
         <div>
           <h2>How it stays safe</h2>
           <ul class="plain">
-            <li>You create a role with AWS's own <em>SecurityAudit</em> policy. It can list and describe settings, but can't change anything or open your files and databases.</li>
+            <li>You create a role that can read 26 specific security settings, listed in the template. It can't change anything, open files or databases, or see Lambda environment variables and EC2 user data.</li>
             <li>Only our scanner can use that role, and only with a one-time code made for your scan.</li>
             <li>No passwords or access keys are ever entered here.</li>
-            <li>Results are deleted after 24 hours. Delete the role when you're done.</li>
+            <li>Scan results are deleted within two days. Delete the role when you're done.</li>
           </ul>
         </div>
         <div>
@@ -63,6 +63,7 @@
         <li class="step" id="step-role">
           <h2>Create the read-only role</h2>
           <p>Pick the region you use most, then open AWS. You'll land on a pre-filled CloudFormation page: tick the box acknowledging IAM resources and choose <strong>Create stack</strong>. It's ready in about a minute.</p>
+          <p class="hint">Only create this role from a scan you started yourself on this page, never from a link someone sent you.</p>
           <div class="field-row">
             <label for="region">Main region</label>
             <select id="region">
@@ -82,7 +83,7 @@
             </select>
           </div>
           <button type="button" class="btn primary" id="session-btn">Open AWS to create the role</button>
-          <p class="hint" id="role-hint" hidden>Didn't open? <a id="role-link" href="#" target="_blank" rel="noopener noreferrer">Use this link</a>. Want to read the template first? <a href="https://github.com/Judewakim/securitystack/blob/main/templates/scan-role.yaml" target="_blank" rel="noopener noreferrer">It's 40 lines on GitHub.</a></p>
+          <p class="hint" id="role-hint" hidden>Didn't open? <a id="role-link" href="#" target="_blank" rel="noopener noreferrer">Use this link</a>. Want to read the template first? <a href="https://github.com/Judewakim/securitystack/blob/main/templates/scan-role.yaml" target="_blank" rel="noopener noreferrer">It's short, on GitHub.</a></p>
         </li>
         <li class="step" id="step-arn" aria-disabled="true">
           <h2>Paste the role's ARN</h2>
@@ -90,7 +91,7 @@
           <form id="arn-form" novalidate>
             <label for="role-arn">RoleArn</label>
             <input id="role-arn" name="roleArn" type="text" inputmode="url" autocomplete="off" spellcheck="false"
-                   placeholder="arn:aws:iam::123456789012:role/SecurityStackScanRole-us-east-1" disabled>
+                   placeholder="arn:aws:iam::123456789012:role/SecurityStackScanRole-1a2b3c4d" disabled>
             <p class="error" id="arn-error" role="alert" hidden></p>
             <button type="submit" class="btn primary" id="scan-btn" disabled>Start scan</button>
           </form>
@@ -147,7 +148,7 @@
         <button type="button" class="btn quiet" id="again-btn">Start over</button>
       </div>
 
-      <p class="cleanup" id="r-cleanup">Done? Delete the <strong>SecurityStackScanRole</strong> stack in CloudFormation to remove the scan role.</p>
+      <p class="cleanup" id="r-cleanup">Done? Delete the <strong>SecurityStackScanRole-…</strong> stack in CloudFormation to remove the scan role.</p>
     </section>
   </main>
 

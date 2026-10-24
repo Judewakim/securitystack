@@ -123,6 +123,24 @@ def test_log_bucket_policy_is_scoped_to_this_account(home_t):
     assert "aws:SourceArn" in policies
 
 
+def test_config_role_can_write_to_log_bucket(home_t, region_t):
+    for t in (home_t, region_t):
+        pols = json.dumps(t.find_resources("AWS::IAM::Policy"))
+        assert "SecurityStackConfigDelivery" in pols and "s3:PutObject" in pols
+
+
+def test_log_retention_minimum_is_past_glacier_transition(home_t):
+    assert home_t.to_json()["Parameters"]["LogRetentionDays"]["MinValue"] > 90
+
+
+def test_alerts_go_through_dedupe_lambda(home_t):
+    rules = [r for r in home_t.find_resources("AWS::Events::Rule").values() if r["Properties"].get("EventPattern")]
+    for r in rules:
+        assert "Fn::GetAtt" in json.dumps(r["Properties"]["Targets"][0]["Arn"])  # a Lambda, not SNS directly
+    pols = json.dumps(home_t.find_resources("AWS::IAM::Policy"))
+    assert "securityhub:BatchUpdateFindings" in pols
+
+
 def test_alerts_only_for_new_active_high_or_critical(home_t):
     rules = home_t.find_resources("AWS::Events::Rule")
     patterns = [r["Properties"].get("EventPattern") for r in rules.values() if r["Properties"].get("EventPattern")]

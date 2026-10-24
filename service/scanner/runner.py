@@ -4,6 +4,7 @@ import datetime as dt
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
+import boto3
 from botocore.config import Config
 
 from . import checks
@@ -13,13 +14,41 @@ BOTO_CONFIG = Config(retries={"max_attempts": 8, "mode": "adaptive"}, connect_ti
 
 
 class _ConfiguredSession:
-    """Wraps a boto3 Session so every client gets retries/timeouts."""
+    """Wraps a boto3 Session so every client gets retries/timeouts.
+
+    boto3 Sessions are not thread-safe, so each worker thread gets its own
+    Session built from the same frozen credentials (see `fork`).
+    """
 
     def __init__(self, session):
         self._s = session
 
     def client(self, name, region_name=None):
         return self._s.client(name, region_name=region_name, config=BOTO_CONFIG)
+
+    def fork(self):
+        creds = self._s.get_credentials().get_frozen_credentials()
+        return _ConfiguredSession(boto3.Session(
+            aws_access_key_id=creds.access_key,
+            aws_secret_access_key=creds.secret_key,
+            aws_session_token=creds.token,
+        ))
+
+
+REGIONAL_CHECKS = (
+    "guardduty", "securityhub", "config", "access-analyzer", "inspector",
+    "ebs-default-encryption", "open-admin-ports", "rds-public", "rds-unencrypted",
+)
+
+
+def _guard(results, check_ids, fn, *args):
+    """Run a group of checks; an unexpected error marks them UNKNOWN, never PASS."""
+    try:
+        return fn(*args)
+    except Exception as exc:
+        for cid in check_ids:
+            results[cid].unknown(f"check failed: {type(exc).__name__}")
+        return None
 
 
 def enabled_regions(session, home_region):
@@ -55,7 +84,8 @@ def baseline_launch_url(template_url, home_region, home_services, multi_region_t
         "param_EnableConfigRecorder": create("configRecorder"),
         "param_EnableAccessAnalyzer": create("accessAnalyzer"),
         "param_EnableInspector": create("inspector"),
-        "param_CreateTrail": str(not multi_region_trail).lower(),
+        # Unknown trail status -> don't create one (a duplicate trail is billed).
+        "param_CreateTrail": "true" if multi_region_trail is False else "false",
     }
     return (
         f"https://{home_region}.console.aws.amazon.com/cloudformation/home?region={home_region}"
@@ -74,18 +104,24 @@ def run_scan(session, home_region="us-east-1", regions=None, baseline_template_u
 
     results = {cid: CheckResult(c) for cid, c in checks.C.items()}
 
-    checks.check_identity(s, results)
-    checks.check_s3(s, results, account_id)
-    trail = checks.check_cloudtrail(s, results, home_region)
+    _guard(results, ("root-mfa", "root-access-keys", "console-users-mfa", "stale-access-keys", "password-policy", "admin-policies"),
+           checks.check_identity, s, results)
+    _guard(results, ("s3-account-bpa", "s3-public-buckets"), checks.check_s3, s, results, account_id)
+    trail = _guard(results, ("cloudtrail",), checks.check_cloudtrail, s, results, home_region) or {"multiRegionTrail": None}
+
+    def scan_region(region):
+        return checks.check_region(s.fork(), region, results)
 
     services_by_region = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {region: pool.submit(checks.check_region, s, region, results) for region in regions}
+        futures = {region: pool.submit(scan_region, region) for region in regions}
         for region, fut in futures.items():
             try:
                 services_by_region[region] = fut.result()
-            except Exception as exc:  # one broken region must not sink the whole scan
+            except Exception as exc:  # one broken region must not sink the scan, or pass its checks
                 services_by_region[region] = {"error": type(exc).__name__}
+                for cid in REGIONAL_CHECKS:
+                    results[cid].unknown(f"{region}: {type(exc).__name__}")
 
     value, grade = score(results)
     ordered = sorted(

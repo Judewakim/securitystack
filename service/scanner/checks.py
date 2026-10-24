@@ -8,6 +8,7 @@ Access-denied or throttling errors mark the check UNKNOWN rather than passing it
 import csv
 import datetime as dt
 import io
+import ipaddress
 import time
 
 from botocore.exceptions import ClientError
@@ -15,9 +16,11 @@ from botocore.exceptions import ClientError
 from .model import Check
 
 ADMIN_PORTS = {22: "SSH", 3389: "RDP", 3306: "MySQL", 5432: "PostgreSQL", 1433: "SQL Server", 27017: "MongoDB", 6379: "Redis"}
-OPEN_CIDRS = {"0.0.0.0/0", "::/0"}
 STALE_KEY_DAYS = 90
 MAX_BUCKETS = 500
+LEGACY_S3_LOCATIONS = {"EU": "eu-west-1"}  # very old buckets report "EU" as their location
+MIN_OPEN_PREFIX_V4 = 8   # a rule allowing /8 or wider counts as "open to the internet"
+MIN_OPEN_PREFIX_V6 = 16
 
 # ---------------------------------------------------------------------------- checks
 
@@ -166,8 +169,11 @@ def check_identity(session, results):
         for page in iam.get_paginator("list_policies").paginate(Scope="Local", OnlyAttached=True):
             for p in page["Policies"]:
                 doc = iam.get_policy_version(PolicyArn=p["Arn"], VersionId=p["DefaultVersionId"])["PolicyVersion"]["Document"]
-                if _grants_full_admin(doc):
-                    results["admin-policies"].fail(p["Arn"], detail=f"Policy {p['PolicyName']} is attached to {p.get('AttachmentCount', '?')} identities")
+                reason = _grants_full_admin(doc)
+                if reason:
+                    results["admin-policies"].fail(
+                        p["Arn"], detail=f"{reason}. Policy {p['PolicyName']} is attached to {p.get('AttachmentCount', '?')} identities"
+                    )
     except ClientError as e:
         results["admin-policies"].unknown(_code(e))
 
@@ -177,17 +183,26 @@ def _as_list(v):
 
 
 def _grants_full_admin(doc):
+    """Return a reason string if the policy grants admin-equivalent access, else None.
+
+    Conditions don't make *:* safe (a SecureTransport condition still grants
+    everything), and Allow + NotAction on Resource * grants everything except a
+    short list, so both are flagged rather than silently passed.
+    """
     if isinstance(doc, str):  # some SDKs return URL-encoded JSON
         import json
         import urllib.parse
 
         doc = json.loads(urllib.parse.unquote(doc))
     for stmt in _as_list(doc.get("Statement", [])):
-        if stmt.get("Effect") != "Allow" or "NotAction" in stmt or "Condition" in stmt:
+        if stmt.get("Effect") != "Allow" or "*" not in _as_list(stmt.get("Resource", [])):
             continue
-        if "*" in _as_list(stmt.get("Action", [])) and "*" in _as_list(stmt.get("Resource", [])):
-            return True
-    return False
+        conditional = " (with conditions)" if "Condition" in stmt else ""
+        if "*" in _as_list(stmt.get("Action", [])):
+            return "Allows every action on every resource" + conditional
+        if "NotAction" in stmt:
+            return "Allows everything except " + ", ".join(_as_list(stmt["NotAction"]))[:120] + conditional
+    return None
 
 
 def check_s3(session, results, account_id):
@@ -217,13 +232,16 @@ def check_s3(session, results, account_id):
         name = b["Name"]
         try:
             region = s3.get_bucket_location(Bucket=name).get("LocationConstraint") or "us-east-1"
+            region = LEGACY_S3_LOCATIONS.get(region, region)
             rs3 = session.client("s3", region_name=region)
             public_reason = _bucket_public_reason(rs3, name)
             if public_reason:
                 results["s3-public-buckets"].fail(f"arn:aws:s3:::{name}", region=region, detail=public_reason)
         except ClientError as e:
-            if _code(e) not in ("NoSuchBucket", "AccessDenied"):
+            if _code(e) != "NoSuchBucket":  # deleted mid-scan is fine; anything else = we don't know
                 results["s3-public-buckets"].unknown(f"{name}: {_code(e)}")
+        except Exception as e:  # never let one odd bucket sink the scan, and never count it as private
+            results["s3-public-buckets"].unknown(f"{name}: {type(e).__name__}")
 
 
 def _bucket_public_reason(s3, name):
@@ -257,13 +275,26 @@ def check_cloudtrail(session, results, home_region):
                 continue
             arn = t["TrailARN"]
             region = arn.split(":")[3]
-            status = session.client("cloudtrail", region_name=region).get_trail_status(Name=arn)
-            if status.get("IsLogging"):
+            ct_region = session.client("cloudtrail", region_name=region)
+            if not ct_region.get_trail_status(Name=arn).get("IsLogging"):
+                continue
+            if _logs_management_events(ct_region.get_event_selectors(TrailName=arn)):
                 return {"multiRegionTrail": True}
-        results["cloudtrail"].fail("account", detail="No multi-region trail is currently logging")
+        results["cloudtrail"].fail("account", detail="No multi-region trail is logging management events")
     except ClientError as e:
         results["cloudtrail"].unknown(_code(e))
     return {"multiRegionTrail": False}
+
+
+def _logs_management_events(selectors):
+    for sel in selectors.get("EventSelectors") or []:
+        if sel.get("IncludeManagementEvents", True) and sel.get("ReadWriteType", "All") in ("All", "WriteOnly"):
+            return True
+    for adv in selectors.get("AdvancedEventSelectors") or []:
+        for f in adv.get("FieldSelectors", []):
+            if f.get("Field") == "eventCategory" and "Management" in f.get("Equals", []):
+                return True
+    return False
 
 
 # ------------------------------------------------------------------------ regional checks
@@ -357,11 +388,21 @@ def check_region(session, region, results):
     return services
 
 
+def _is_open(cidr):
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    limit = MIN_OPEN_PREFIX_V4 if net.version == 4 else MIN_OPEN_PREFIX_V6
+    # Very wide AND reaching public addresses (10.0.0.0/8 is wide but private).
+    return net.prefixlen <= limit and not net.is_private
+
+
 def _exposed_ports(sg):
     exposed = []
     for rule in sg.get("IpPermissions", []):
-        cidrs = {r.get("CidrIp") for r in rule.get("IpRanges", [])} | {r.get("CidrIpv6") for r in rule.get("Ipv6Ranges", [])}
-        if not cidrs & OPEN_CIDRS:
+        cidrs = [r.get("CidrIp") for r in rule.get("IpRanges", [])] + [r.get("CidrIpv6") for r in rule.get("Ipv6Ranges", [])]
+        if not any(c and _is_open(c) for c in cidrs):
             continue
         if rule.get("IpProtocol") == "-1":
             exposed.append("all ports")

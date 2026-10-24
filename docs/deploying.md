@@ -39,10 +39,11 @@ Delete the region stacks, then the home stack. Detection services, rules, alerts
 
 ### One-time setup in your staging account
 
-1. **Bootstrap CDK** from CloudShell in the target region: `npx cdk bootstrap`.
+1. **Bootstrap CDK** from CloudShell in the target region:
+   `npx aws-cdk@2 bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/us-east-1`
 2. **Allow one public bucket.** CloudFormation "Launch Stack" links must point at S3, so the service creates one bucket whose `templates/` objects are public-read (nothing else is ever stored there). If the account has account-level S3 Block Public Access on, that bucket's policy will be rejected. Either turn off the account-level *BlockPublicPolicy* / *RestrictPublicBuckets* settings in this vendor account only, or host the service in a dedicated account. Don't do this in an account that stores real data.
-3. **Create the GitHub deploy role**: launch [`infra/github-deploy-role.yaml`](../infra/github-deploy-role.yaml) in the same account. It trusts only this repository's `staging` environment and can only assume the CDK bootstrap roles, so no AWS keys are stored in GitHub.
-4. In GitHub, go to **Settings > Environments > New environment**, name it `staging`, add yourself as a required reviewer, and add these variables:
+3. **Create the GitHub deploy role**: launch [`infra/github-deploy-role.yaml`](../infra/github-deploy-role.yaml) in the same account. It trusts only this repository's `staging` environment and can only assume the CDK bootstrap roles, so no AWS keys are stored in GitHub. CDK's default deployment role has administrator rights, though, so the next step's protections matter. Use a sandbox account.
+4. In GitHub, go to **Settings > Environments > New environment** and name it `staging`. Add yourself under **Required reviewers**, and set **Deployment branches** to *Selected branches* with only `main`. Then add these variables:
    - `AWS_DEPLOY_ROLE_ARN`: the `DeployRoleArn` output from step 3
    - `AWS_REGION`: e.g. `us-east-1`
    - `ALERT_EMAIL`: where staging alerts go

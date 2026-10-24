@@ -1,9 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Lets GitHub Actions in one repository deploy SecurityStack to this account
-  without stored access keys (OpenID Connect). The role can only assume the CDK
-  bootstrap roles, so it can deploy CDK apps and nothing else.
-  Deploy this once in your sandbox/staging account, after running `cdk bootstrap` there.
+  without stored access keys (OpenID Connect). The role itself can only assume
+  the CDK bootstrap roles, but CDK's default deployment role has administrator
+  rights, so whoever can run the workflow can change this account. Use a sandbox
+  or staging account, and in GitHub limit the environment to the main branch with
+  you as a required reviewer. Deploy this once, after `cdk bootstrap`.
 
 Parameters:
   GitHubRepo:

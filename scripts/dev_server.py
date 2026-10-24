@@ -39,8 +39,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             SCANS[sid] = {"status": "AWAITING_ROLE"}
             region = body.get("homeRegion", "us-east-1")
             return self._json(201, {
-                "scanId": sid, "externalId": "ss-dev", "homeRegion": region,
-                "roleLaunchUrl": f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}#/stacks/quickcreate?stackName=SecurityStackScanRole",
+                "scanId": sid, "homeRegion": region,
+                "roleLaunchUrl": f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}#/stacks/quickcreate?stackName=SecurityStackScanRole-1a2b3c4d",
             })
         m = re.fullmatch(r"/api/scans/([\w-]{32})/start", self.path)
         if m and m.group(1) in SCANS:

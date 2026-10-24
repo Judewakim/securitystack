@@ -5,7 +5,7 @@
 const API = "/api/scans";
 const POLL_MS = 3000;
 const POLL_LIMIT_MS = 12 * 60 * 1000;
-const ARN_RE = /^arn:aws:iam::\d{12}:role\/SecurityStackScanRole[A-Za-z0-9+=,.@_-]{0,40}$/;
+const ARN_RE = /^arn:aws:iam::\d{12}:role\/SecurityStackScanRole-[a-z0-9]{8}$/;
 const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const SEV_LABEL = { CRITICAL: "Critical", HIGH: "High", MEDIUM: "Medium", LOW: "Low" };
 const GRADE_HEADLINE = {
@@ -133,7 +133,7 @@ async function startScan(event) {
   $("arn-error").hidden = true;
   const roleArn = $("role-arn").value.trim();
   if (!ARN_RE.test(roleArn)) {
-    showArnError("That isn't the RoleArn output. It should look like arn:aws:iam::123456789012:role/SecurityStackScanRole-us-east-1.");
+    showArnError("That isn't the RoleArn output. It should look like arn:aws:iam::123456789012:role/SecurityStackScanRole-1a2b3c4d.");
     return;
   }
   $("scan-btn").disabled = true;
