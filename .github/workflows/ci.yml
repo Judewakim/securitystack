@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          npm install -g aws-cdk@2
+      - name: Unit + infrastructure tests (no AWS access needed)
+        run: pytest -q
+      - name: Synth with cdk-nag (fails on any unsuppressed AWS Solutions finding)
+        run: cdk synth --quiet -c withService=true
+      - name: Build one-click release templates
+        run: python scripts/build_release.py
+      - name: Lint release templates
+        run: cfn-lint --ignore-checks W3005 -- dist/*.template.json templates/*.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-templates
+          path: dist/*.template.json

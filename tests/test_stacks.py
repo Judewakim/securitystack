@@ -1,0 +1,155 @@
+"""Infrastructure tests: assert the synthesized templates do what the README promises."""
+
+import json
+
+import aws_cdk as cdk
+import pytest
+from aws_cdk.assertions import Annotations, Match, Template
+from cdk_nag import AwsSolutionsChecks
+
+from securitystack.stacks import SecurityStackHome, SecurityStackRegion
+
+
+@pytest.fixture(scope="module")
+def stacks():
+    app = cdk.App(context={"release": "true"})
+    home = SecurityStackHome(app, "Home", synthesizer=cdk.BootstraplessSynthesizer())
+    region = SecurityStackRegion(app, "Region", synthesizer=cdk.BootstraplessSynthesizer())
+    cdk.Aspects.of(app).add(AwsSolutionsChecks())
+    app.synth()
+    return home, region
+
+
+@pytest.fixture(scope="module")
+def home_t(stacks):
+    return Template.from_stack(stacks[0])
+
+
+@pytest.fixture(scope="module")
+def region_t(stacks):
+    return Template.from_stack(stacks[1])
+
+
+def test_no_unsuppressed_cdk_nag_errors(stacks):
+    for stack in stacks:
+        errors = Annotations.from_stack(stack).find_error("*", Match.string_like_regexp("AwsSolutions-.*"))
+        assert errors == [], [e.entry.data for e in errors]
+
+
+def test_customer_facing_parameter_names(home_t, region_t):
+    home_params = home_t.to_json()["Parameters"]
+    for name in (
+        "AlertEmail", "CreateTrail", "LogRetentionDays", "EnableGuardDuty", "EnableSecurityHub",
+        "EnableConfigRecorder", "EnableAccessAnalyzer", "EnableInspector",
+        "AutoFixEbsDefaultEncryption", "AutoFixS3AccountBlockPublicAccess",
+    ):
+        assert name in home_params, name
+    assert "ConfigBucketName" in region_t.to_json()["Parameters"]
+    assert "BootstrapVersion" not in home_params
+
+
+def test_auto_fixes_are_off_by_default(home_t):
+    params = home_t.to_json()["Parameters"]
+    assert params["AutoFixEbsDefaultEncryption"]["Default"] == "false"
+    assert params["AutoFixS3AccountBlockPublicAccess"]["Default"] == "false"
+
+
+def test_security_hub_uses_correct_standard_arns(home_t):
+    stds = home_t.find_resources("AWS::SecurityHub::Standard")
+    arns = json.dumps(stds)
+    assert "::standards/aws-foundational-security-best-practices/v/1.0.0" in arns
+    assert "::standards/cis-aws-foundations-benchmark/v/3.0.0" in arns
+    assert "::standard/" not in arns  # the v1 bug
+    for std in stds.values():
+        assert std["Condition"] == "SecurityHubOn"
+
+
+def test_security_hub_does_not_enable_legacy_default_standards(home_t):
+    home_t.has_resource_properties("AWS::SecurityHub::Hub", {
+        "EnableDefaultStandards": False,
+        "ControlFindingGenerator": "SECURITY_CONTROL",
+    })
+
+
+def test_every_service_is_switchable(home_t):
+    conditions = {
+        "AWS::GuardDuty::Detector": "GuardDutyOn",
+        "AWS::SecurityHub::Hub": "SecurityHubOn",
+        "AWS::Config::ConfigurationRecorder": "ConfigOn",
+        "AWS::Config::DeliveryChannel": "ConfigOn",
+        "AWS::AccessAnalyzer::Analyzer": "AccessAnalyzerOn",
+        "AWS::CloudTrail::Trail": "TrailOn",
+        "AWS::SecurityHub::FindingAggregator": "SecurityHubOn",
+    }
+    for rtype, cond in conditions.items():
+        resources = home_t.find_resources(rtype)
+        assert resources, rtype
+        for r in resources.values():
+            assert r.get("Condition") == cond, rtype
+
+
+def test_global_resources_recorded_only_in_home_region(home_t, region_t):
+    home_t.has_resource_properties("AWS::Config::ConfigurationRecorder", {
+        "RecordingGroup": {"AllSupported": True, "IncludeGlobalResourceTypes": True}
+    })
+    region_t.has_resource_properties("AWS::Config::ConfigurationRecorder", {
+        "RecordingGroup": {"AllSupported": True, "IncludeGlobalResourceTypes": False}
+    })
+
+
+def test_trail_is_multi_region_with_validation(home_t):
+    home_t.has_resource_properties("AWS::CloudTrail::Trail", {
+        "IsMultiRegionTrail": True,
+        "EnableLogFileValidation": True,
+        "IncludeGlobalServiceEvents": True,
+        "IsLogging": True,
+    })
+
+
+def test_buckets_are_private_and_tls_only(home_t):
+    buckets = home_t.find_resources("AWS::S3::Bucket")
+    assert len(buckets) == 3
+    for b in buckets.values():
+        pab = b["Properties"]["PublicAccessBlockConfiguration"]
+        assert all(pab[k] for k in ("BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls", "RestrictPublicBuckets"))
+        assert b["DeletionPolicy"] == "Retain"
+    policies = json.dumps(home_t.find_resources("AWS::S3::BucketPolicy"))
+    assert '"aws:SecureTransport": "false"' in policies
+
+
+def test_log_bucket_policy_is_scoped_to_this_account(home_t):
+    policies = json.dumps(home_t.find_resources("AWS::S3::BucketPolicy"))
+    assert "aws:SourceAccount" in policies
+    assert "aws:SourceArn" in policies
+
+
+def test_alerts_only_for_new_active_high_or_critical(home_t):
+    rules = home_t.find_resources("AWS::Events::Rule")
+    patterns = [r["Properties"].get("EventPattern") for r in rules.values() if r["Properties"].get("EventPattern")]
+    assert len(patterns) == 2
+    for p in patterns:
+        f = p["detail"]["findings"]
+        assert f["Severity"]["Label"] == ["HIGH", "CRITICAL"]
+        assert f["Workflow"]["Status"] == ["NEW"]
+        assert f["RecordState"] == ["ACTIVE"]
+
+
+def test_weekly_digest_schedule(home_t):
+    home_t.has_resource_properties("AWS::Events::Rule", {"ScheduleExpression": "cron(0 13 ? * MON *)"})
+
+
+def test_no_s3_assets_so_one_click_works(stacks):
+    for stack in stacks:
+        t = json.dumps(Template.from_stack(stack).to_json())
+        assert "AssetParameters" not in t
+        assert "cdk-hnb659fds-assets" not in t
+        for fn in Template.from_stack(stack).find_resources("AWS::Lambda::Function").values():
+            assert "ZipFile" in fn["Properties"]["Code"]
+
+
+def test_lambda_roles_have_no_admin_wildcards(home_t):
+    for pol in home_t.find_resources("AWS::IAM::Policy").values():
+        for stmt in pol["Properties"]["PolicyDocument"]["Statement"]:
+            actions = stmt["Action"] if isinstance(stmt["Action"], list) else [stmt["Action"]]
+            assert "*" not in actions
+            assert not any(a.endswith(":*") for a in actions if isinstance(a, str) and not a.startswith("s3:"))

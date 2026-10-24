@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# Build output (release templates are attached to GitHub releases, not committed)
+dist/
+
+# Node
+node_modules/
+
+# Local secrets / credentials — never commit
+.env
+*.pem
+*credentials*
+*accessKeys*.csv
+
+# Editors / tools
+.idea/
+.vscode/
+.DS_Store
+.claude/
