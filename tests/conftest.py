@@ -8,6 +8,12 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# Some modules create boto3 clients at import time (as Lambda code should), so
+# give them a fake region/credentials before any test module is imported.
+os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+
 
 @pytest.fixture(autouse=True)
 def fake_aws_env(monkeypatch):

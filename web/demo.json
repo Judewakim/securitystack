@@ -1,0 +1,396 @@
+{
+ "version": 1,
+ "accountId": "111122223333",
+ "homeRegion": "us-east-1",
+ "regionsScanned": [
+  "us-east-1",
+  "us-west-2",
+  "eu-west-1"
+ ],
+ "startedAt": "2026-10-24T19:01:52.392288+00:00",
+ "finishedAt": "2026-10-24T19:01:56.161498+00:00",
+ "score": 65,
+ "grade": "D",
+ "counts": {
+  "CRITICAL": 1,
+  "HIGH": 4,
+  "MEDIUM": 7,
+  "LOW": 3
+ },
+ "checksFailed": 7,
+ "checksPassed": 11,
+ "checksUnknown": 0,
+ "fixableBySecurityStack": 4,
+ "checks": [
+  {
+   "id": "s3-public-buckets",
+   "title": "Publicly accessible S3 buckets",
+   "severity": "CRITICAL",
+   "category": "Data",
+   "why": "Anyone on the internet can read (and sometimes write) the data in these buckets.",
+   "fix": "Remove the public policy/ACL and turn on Block Public Access, unless the bucket intentionally hosts public files.",
+   "fixedBySecurityStack": false,
+   "ok": "No public S3 buckets",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "s3-public-buckets",
+     "resource": "arn:aws:s3:::acme-marketing-assets",
+     "region": "us-east-1",
+     "detail": "ACL grants READ to AllUsers"
+    }
+   ],
+   "findingCount": 1
+  },
+  {
+   "id": "console-users-mfa",
+   "title": "Console users without MFA",
+   "severity": "HIGH",
+   "category": "Identity",
+   "why": "A stolen or guessed password is enough to sign in.",
+   "fix": "Require MFA for every IAM user with console access, or move people to IAM Identity Center.",
+   "fixedBySecurityStack": false,
+   "ok": "All console users have MFA",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "console-users-mfa",
+     "resource": "arn:aws:iam::111122223333:user/maria.ops",
+     "region": "global",
+     "detail": "IAM user maria.ops"
+    },
+    {
+     "check_id": "console-users-mfa",
+     "resource": "arn:aws:iam::111122223333:user/jordan",
+     "region": "global",
+     "detail": "IAM user jordan"
+    }
+   ],
+   "findingCount": 2
+  },
+  {
+   "id": "open-admin-ports",
+   "title": "Security groups open admin/database ports to the internet",
+   "severity": "HIGH",
+   "category": "Network",
+   "why": "SSH, RDP and database ports open to 0.0.0.0/0 are scanned and brute-forced constantly.",
+   "fix": "Restrict these rules to known IPs, or use Session Manager / a VPN instead.",
+   "fixedBySecurityStack": false,
+   "ok": "No admin or database ports open to the internet",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "open-admin-ports",
+     "resource": "sg-c0a5b25184eced23c (bastion)",
+     "region": "us-east-1",
+     "detail": "Open to the internet: SSH (22)"
+    },
+    {
+     "check_id": "open-admin-ports",
+     "resource": "sg-dc98f9494dc25362b (legacy-db)",
+     "region": "us-west-2",
+     "detail": "Open to the internet: PostgreSQL (5432)"
+    }
+   ],
+   "findingCount": 2
+  },
+  {
+   "id": "s3-account-bpa",
+   "title": "S3 Block Public Access is off for the account",
+   "severity": "MEDIUM",
+   "category": "Data",
+   "why": "Any bucket can be made public by a single policy or ACL mistake.",
+   "fix": "Turn on account-level S3 Block Public Access (SecurityStack can do this as an opt-in auto-fix).",
+   "fixedBySecurityStack": true,
+   "ok": "S3 Block Public Access is on for the account",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "s3-account-bpa",
+     "resource": "account",
+     "region": "global",
+     "detail": "Account-level Block Public Access is not fully enabled"
+    }
+   ],
+   "findingCount": 1
+  },
+  {
+   "id": "securityhub",
+   "title": "Security Hub is off",
+   "severity": "MEDIUM",
+   "category": "Detection",
+   "why": "There's no continuous check of your configuration against security best practices.",
+   "fix": "Enable Security Hub with the AWS Foundational and CIS standards (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "Security Hub is on",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "securityhub",
+     "resource": "Security Hub (eu-west-1)",
+     "region": "eu-west-1",
+     "detail": ""
+    },
+    {
+     "check_id": "securityhub",
+     "resource": "Security Hub (us-east-1)",
+     "region": "us-east-1",
+     "detail": ""
+    },
+    {
+     "check_id": "securityhub",
+     "resource": "Security Hub (us-west-2)",
+     "region": "us-west-2",
+     "detail": ""
+    }
+   ],
+   "findingCount": 3
+  },
+  {
+   "id": "inspector",
+   "title": "Inspector vulnerability scanning is off",
+   "severity": "MEDIUM",
+   "category": "Detection",
+   "why": "Known software vulnerabilities in EC2, container images and Lambda go unnoticed.",
+   "fix": "Enable Amazon Inspector (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "Inspector is scanning",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "inspector",
+     "resource": "Inspector (us-west-2)",
+     "region": "us-west-2",
+     "detail": ""
+    },
+    {
+     "check_id": "inspector",
+     "resource": "Inspector (us-east-1)",
+     "region": "us-east-1",
+     "detail": ""
+    },
+    {
+     "check_id": "inspector",
+     "resource": "Inspector (eu-west-1)",
+     "region": "eu-west-1",
+     "detail": ""
+    }
+   ],
+   "findingCount": 3
+  },
+  {
+   "id": "access-analyzer",
+   "title": "IAM Access Analyzer is off",
+   "severity": "LOW",
+   "category": "Detection",
+   "why": "Resources shared with outside accounts or the public aren't flagged.",
+   "fix": "Create an account analyzer in each region; it's free (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "IAM Access Analyzer is on",
+   "status": "FAIL",
+   "note": "",
+   "findings": [
+    {
+     "check_id": "access-analyzer",
+     "resource": "IAM Access Analyzer (us-east-1)",
+     "region": "us-east-1",
+     "detail": ""
+    },
+    {
+     "check_id": "access-analyzer",
+     "resource": "IAM Access Analyzer (us-west-2)",
+     "region": "us-west-2",
+     "detail": ""
+    },
+    {
+     "check_id": "access-analyzer",
+     "resource": "IAM Access Analyzer (eu-west-1)",
+     "region": "eu-west-1",
+     "detail": ""
+    }
+   ],
+   "findingCount": 3
+  },
+  {
+   "id": "root-mfa",
+   "title": "Root user has no MFA",
+   "severity": "CRITICAL",
+   "category": "Identity",
+   "why": "Anyone with the root password controls the entire account, including billing and deleting everything.",
+   "fix": "Sign in as root and add an MFA device (a hardware key or authenticator app).",
+   "fixedBySecurityStack": false,
+   "ok": "Root user has MFA",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "root-access-keys",
+   "title": "Root user has access keys",
+   "severity": "CRITICAL",
+   "category": "Identity",
+   "why": "Root keys cannot be limited by any policy. If leaked, an attacker has full control.",
+   "fix": "Delete the root access keys and use IAM roles or users with least privilege instead.",
+   "fixedBySecurityStack": false,
+   "ok": "Root user has no access keys",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "admin-policies",
+   "title": "Custom policies grant full admin (*:*)",
+   "severity": "HIGH",
+   "category": "Identity",
+   "why": "Policies allowing every action on every resource give whoever holds them total control.",
+   "fix": "Replace *:* with only the actions and resources each workload needs.",
+   "fixedBySecurityStack": false,
+   "ok": "No custom full-admin policies",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "cloudtrail",
+   "title": "No multi-region CloudTrail trail is logging",
+   "severity": "HIGH",
+   "category": "Logging",
+   "why": "Without an audit trail you can't see who did what, or investigate an incident.",
+   "fix": "Create a multi-region trail with log file validation (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "Multi-region CloudTrail is logging",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "guardduty",
+   "title": "GuardDuty threat detection is off",
+   "severity": "HIGH",
+   "category": "Detection",
+   "why": "Compromised credentials, crypto-mining and data exfiltration go unnoticed.",
+   "fix": "Enable GuardDuty in every region you use (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "GuardDuty is on",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "rds-public",
+   "title": "Publicly accessible databases",
+   "severity": "HIGH",
+   "category": "Network",
+   "why": "The database endpoint is reachable from the internet, protected only by its password.",
+   "fix": "Set PubliclyAccessible to false and reach the database through private networking.",
+   "fixedBySecurityStack": false,
+   "ok": "No publicly accessible databases",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "password-policy",
+   "title": "Weak or missing password policy",
+   "severity": "MEDIUM",
+   "category": "Identity",
+   "why": "Without a policy, IAM users can set short, easily guessed passwords.",
+   "fix": "Set an IAM password policy: at least 14 characters, and prevent reuse.",
+   "fixedBySecurityStack": false,
+   "ok": "Strong password policy",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "config",
+   "title": "AWS Config is not recording",
+   "severity": "MEDIUM",
+   "category": "Logging",
+   "why": "There's no history of how resources changed, which audits and investigations rely on.",
+   "fix": "Turn on the AWS Config recorder (SecurityStack does this).",
+   "fixedBySecurityStack": true,
+   "ok": "AWS Config is recording",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "ebs-default-encryption",
+   "title": "EBS encryption by default is off",
+   "severity": "MEDIUM",
+   "category": "Data",
+   "why": "New disks and snapshots can be created unencrypted.",
+   "fix": "Turn on EBS encryption by default in each region (SecurityStack can do this as an opt-in auto-fix).",
+   "fixedBySecurityStack": true,
+   "ok": "EBS encryption by default is on",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "rds-unencrypted",
+   "title": "Unencrypted databases",
+   "severity": "MEDIUM",
+   "category": "Data",
+   "why": "Data at rest and its snapshots are not encrypted.",
+   "fix": "Restore from an encrypted snapshot copy to encrypt an existing database.",
+   "fixedBySecurityStack": false,
+   "ok": "All databases are encrypted",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  },
+  {
+   "id": "stale-access-keys",
+   "title": "Unused or old access keys",
+   "severity": "MEDIUM",
+   "category": "Identity",
+   "why": "Keys unused for 90+ days are forgotten credentials that still work if leaked.",
+   "fix": "Deactivate and delete keys that aren't used; rotate the rest regularly.",
+   "fixedBySecurityStack": false,
+   "ok": "No unused or old access keys",
+   "status": "PASS",
+   "note": "",
+   "findings": [],
+   "findingCount": 0
+  }
+ ],
+ "servicesByRegion": {
+  "us-east-1": {
+   "guardDuty": true,
+   "securityHub": false,
+   "configRecorder": true,
+   "inspector": false
+  },
+  "us-west-2": {
+   "guardDuty": false,
+   "securityHub": false,
+   "configRecorder": false,
+   "inspector": false
+  },
+  "eu-west-1": {
+   "guardDuty": false,
+   "securityHub": false,
+   "configRecorder": false,
+   "inspector": false
+  }
+ },
+ "baselineLaunchUrl": "https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?stackName=SecurityStack&templateURL=https%3A%2F%2Fexample-templates.s3.us-east-1.amazonaws.com%2Ftemplates%2Fsecuritystack-home.template.json&param_EnableGuardDuty=false&param_EnableSecurityHub=true&param_EnableConfigRecorder=false&param_EnableAccessAnalyzer=true&param_EnableInspector=true&param_CreateTrail=false"
+}
