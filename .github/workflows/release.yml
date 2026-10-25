@@ -1,11 +1,11 @@
 name: Release
 
-# Push a tag like v2.0.0 to publish the one-click templates as release assets.
-# The build job has read-only access; only the tiny publish job can write, and it
-# runs no third-party installs.
+# Publish a release on GitHub (Releases > Draft a new release, tag e.g. v2.0.0)
+# and this attaches the one-click templates to it. The build job has read-only
+# access; only the tiny upload job can write, and it runs no third-party installs.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -44,9 +44,8 @@ jobs:
         with:
           name: release-templates
           path: dist
-      - name: Publish release
+      - name: Attach templates to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.template.json \
-            --repo "$GITHUB_REPOSITORY" --title "SecurityStack $GITHUB_REF_NAME" --generate-notes
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/*.template.json --repo "$GITHUB_REPOSITORY" --clobber
