@@ -1,13 +1,13 @@
 # SecurityStack
 
-**A one-click security baseline for AWS accounts, plus a free read-only scan that shows what's missing first.**
+**Turn an AWS account from unprotected to monitored in one click.** SecurityStack is a drop-in security layer: it turns on AWS's own detection, logging and compliance services, wires them together, and tells you what matters. It detects what you already run and leaves it alone. A free read-only scan is included, for anyone who wants to see what's missing first.
 
 Small companies on AWS usually have no one whose job is security. The services that would catch a leaked key or a public bucket (GuardDuty, Security Hub, Config, Inspector, CloudTrail) are all there, but they're off, and turning them on correctly across regions is a day of work most teams never get to. SecurityStack does it in one deployment. It then sends a plain-English email when something serious happens, plus a weekly report you can hand to an auditor, a customer's security questionnaire, or a cyber insurer.
 
-![Free scan results page](docs/screenshot-results.png)
+![SecurityStack site](docs/screenshot-landing.png)
 
-- **Free scan:** a web app that checks an account for 18 common security gaps in about two minutes, using a read-only role. It never asks for access keys. [How it works](#the-free-scan)
-- **Baseline:** CloudFormation templates, built with the AWS CDK in Python, that turn on and wire up AWS's own security services. [What it deploys](#what-the-baseline-deploys)
+- **The security layer (the product):** CloudFormation templates, built with the AWS CDK in Python, that turn on and wire up AWS's own security services. [What it deploys](#what-the-baseline-deploys)
+- **Free check (included):** a web app that checks an account for 18 common security gaps in about two minutes, using a read-only role. It never asks for access keys. [How it works](#the-free-scan)
 
 > SecurityStack supports evidence for SOC 2 and ISO 27001 controls. It does not by itself make you compliant with anything.
 
@@ -29,7 +29,7 @@ Small companies on AWS usually have no one whose job is security. The services t
 | EBS encryption by default | Opt-in auto-fix | **off** |
 | Account-wide S3 Block Public Access | Opt-in auto-fix; can break buckets that intentionally serve public files | **off** |
 
-Every service is a switch. CloudFormation can't take over a service that's already running, so you turn off anything you already have. The free scan detects those and pre-fills the switches for you.
+**Existing services are detected, not duplicated.** CloudFormation can't take over a service that's already on, which is why most baselines fail on real accounts. SecurityStack's baseline function checks each service first, turns on only what's missing, and records what it turned on (in SSM Parameter Store). Deleting the stack removes only what SecurityStack added; if a deploy fails halfway, it undoes its own changes before reporting the failure. Every service can still be switched off with a parameter.
 
 Logs go to a private, TLS-only, versioned bucket whose policy only accepts writes from this account's CloudTrail and Config. Logs move to cheaper storage tiers after 30 and 90 days.
 
@@ -66,9 +66,9 @@ GuardDuty and Security Hub have 30-day free trials, and Inspector has 15 days, s
 ## Engineering notes
 
 - **CDK as the source of truth.** Reusable `RegionalBaseline` and `HomeBaseline` constructs are composed into two stacks. The release build uses the `BootstraplessSynthesizer` and inline Lambda code, so the published templates have **no S3 assets**: a customer can launch them without installing or bootstrapping CDK.
-- **Native resources first.** A Lambda custom resource is used only where CloudFormation has no resource type (Inspector, plus the two opt-in fixes). It reports real failures to CloudFormation, and on delete it only undoes what it did.
+- **Adopt, don't collide.** One custom resource per region enables services through their APIs instead of native CloudFormation resources, because native resources fail on accounts that already run GuardDuty or Security Hub (this happened on the first real deploy). It keeps an ownership ledger, rolls back its own partial work on failure, never changes its physical ID (so an update can't trigger a destructive replacement), and reports real failures to CloudFormation.
 - **Security checks on the infrastructure itself.** [cdk-nag](https://github.com/cdklabs/cdk-nag) AWS Solutions rules run on every synth, and synth fails on any finding. Every exception has a written reason next to the code.
-- **Tests that don't need AWS.** 80 tests, covering template assertions, the Lambdas, the scanner against a simulated insecure account ([moto](https://github.com/getmoto/moto)), and the full scan API flow including abuse cases.
+- **Tests that don't need AWS.** 76 tests, covering template assertions, the Lambdas, the scanner against a simulated insecure account ([moto](https://github.com/getmoto/moto)), and the full scan API flow including abuse cases.
 - **The web app has no dependencies.** Plain HTML, CSS and JavaScript under a strict Content-Security-Policy. API data is only ever written with `textContent`, and outgoing links are checked against the AWS console origin.
 
 ### What changed from v1
@@ -79,7 +79,7 @@ v1 was a hand-written template. It reported success even when services failed to
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                 # 80 tests, no AWS access needed
+pytest                                 # 76 tests, no AWS access needed
 npx cdk synth -c withService=true      # all stacks, with cdk-nag
 python3 scripts/build_release.py       # one-click templates into dist/
 python3 scripts/dev_server.py          # web app with a fake API at localhost:8000

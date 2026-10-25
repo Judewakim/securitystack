@@ -1,7 +1,8 @@
 """HomeBaseline: the account-wide pieces SecurityStack deploys once, in the home region.
 
 * A central, locked-down log bucket for CloudTrail and AWS Config (all regions).
-* A multi-region CloudTrail trail.
+* The bucket policy for a multi-region CloudTrail trail (the trail itself is
+  created by the regional baseline function, only if none is already logging).
 * Security Hub cross-region aggregation, so one place sees every region.
 * Real-time email alerts for new HIGH/CRITICAL findings.
 * A weekly digest: posture score + top issues, as an email and an HTML report.
@@ -15,14 +16,12 @@ from aws_cdk import (
     Duration,
     Fn,
     RemovalPolicy,
-    aws_cloudtrail as cloudtrail,
     aws_events as events,
     aws_events_targets as targets,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_logs as logs,
     aws_s3 as s3,
-    aws_securityhub as securityhub,
     aws_sns as sns,
 )
 from cdk_nag import NagSuppressions
@@ -47,9 +46,9 @@ class HomeBaseline(Construct):
             description="Email for real-time HIGH/CRITICAL alerts and the weekly report. You must confirm the subscription email AWS sends.",
         )
         p_email.override_logical_id("AlertEmail")
-        p_trail = bool_param(
+        self.p_trail = bool_param(
             self, "CreateTrail", default=True,
-            description="Create a multi-region CloudTrail trail. Set false if you already have one (a second copy of management events is billed).",
+            description="Create a multi-region CloudTrail trail if the account doesn't already have one that's logging.",
         )
         p_retention = CfnParameter(
             self,
@@ -65,11 +64,10 @@ class HomeBaseline(Construct):
             self, "AutoFixS3AccountBlockPublicAccess", default=False,
             description="OPT-IN auto-fix: turn on account-wide S3 Block Public Access. WARNING: breaks any bucket intentionally serving public content.",
         )
-        self.params = [p_email, p_trail, p_retention, self.p_s3_bpa]
+        self.params = [p_email, self.p_trail, p_retention, self.p_s3_bpa]
 
         c_email = CfnCondition(self, "HasAlertEmail", expression=Fn.condition_not(Fn.condition_equals(p_email.value_as_string, "")))
         c_email.override_logical_id("HasAlertEmail")
-        c_trail = is_true(self, "TrailOn", p_trail)
 
         # --- Buckets ---------------------------------------------------------------
         access_logs = s3.Bucket(
@@ -150,21 +148,6 @@ class HomeBaseline(Construct):
             resources=[f"{bucket_arn}/config/AWSLogs/{Aws.ACCOUNT_ID}/Config/*"],
             conditions={"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceAccount": Aws.ACCOUNT_ID}},
         ))
-
-        # --- CloudTrail: who did what, in every region ----------------------------
-        trail = cloudtrail.CfnTrail(
-            self,
-            "Trail",
-            trail_name=TRAIL_NAME,
-            s3_bucket_name=self.log_bucket.bucket_name,
-            s3_key_prefix="cloudtrail",
-            is_logging=True,
-            is_multi_region_trail=True,
-            include_global_service_events=True,
-            enable_log_file_validation=True,
-        )
-        trail.cfn_options.condition = c_trail
-        trail.add_resource_dependency(self.log_bucket.policy.node.default_child)
 
         # --- Alerts ----------------------------------------------------------------
         self.topic = sns.Topic(self, "AlertsTopic", display_name="SecurityStack alerts", enforce_ssl=True)
@@ -290,9 +273,3 @@ class HomeBaseline(Construct):
             [{"id": "AwsSolutions-IAM5", "reason": "securityhub:GetFindings does not support resource-level permissions; S3 write is scoped to the reports/ prefix.", "appliesTo": ["Resource::*", {"regex": "/^Action::s3:.*$/"}, {"regex": "/^Resource::<.*ReportsBucket.*\\.Arn>/reports/\\*$/"}]}],
             apply_to_children=True,
         )
-
-    def add_finding_aggregator(self, hub: securityhub.CfnHub, condition: CfnCondition) -> None:
-        """Pull findings from every region into the home region (needs the home hub)."""
-        aggregator = securityhub.CfnFindingAggregator(self, "FindingAggregator", region_linking_mode="ALL_REGIONS")
-        aggregator.cfn_options.condition = condition
-        aggregator.add_resource_dependency(hub)

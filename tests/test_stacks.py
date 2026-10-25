@@ -54,58 +54,6 @@ def test_auto_fixes_are_off_by_default(home_t):
     assert params["AutoFixS3AccountBlockPublicAccess"]["Default"] == "false"
 
 
-def test_security_hub_uses_correct_standard_arns(home_t):
-    stds = home_t.find_resources("AWS::SecurityHub::Standard")
-    arns = json.dumps(stds)
-    assert "::standards/aws-foundational-security-best-practices/v/1.0.0" in arns
-    assert "::standards/cis-aws-foundations-benchmark/v/3.0.0" in arns
-    assert "::standard/" not in arns  # the v1 bug
-    for std in stds.values():
-        assert std["Condition"] == "SecurityHubOn"
-
-
-def test_security_hub_does_not_enable_legacy_default_standards(home_t):
-    home_t.has_resource_properties("AWS::SecurityHub::Hub", {
-        "EnableDefaultStandards": False,
-        "ControlFindingGenerator": "SECURITY_CONTROL",
-    })
-
-
-def test_every_service_is_switchable(home_t):
-    conditions = {
-        "AWS::GuardDuty::Detector": "GuardDutyOn",
-        "AWS::SecurityHub::Hub": "SecurityHubOn",
-        "AWS::Config::ConfigurationRecorder": "ConfigOn",
-        "AWS::Config::DeliveryChannel": "ConfigOn",
-        "AWS::AccessAnalyzer::Analyzer": "AccessAnalyzerOn",
-        "AWS::CloudTrail::Trail": "TrailOn",
-        "AWS::SecurityHub::FindingAggregator": "SecurityHubOn",
-    }
-    for rtype, cond in conditions.items():
-        resources = home_t.find_resources(rtype)
-        assert resources, rtype
-        for r in resources.values():
-            assert r.get("Condition") == cond, rtype
-
-
-def test_global_resources_recorded_only_in_home_region(home_t, region_t):
-    home_t.has_resource_properties("AWS::Config::ConfigurationRecorder", {
-        "RecordingGroup": {"AllSupported": True, "IncludeGlobalResourceTypes": True}
-    })
-    region_t.has_resource_properties("AWS::Config::ConfigurationRecorder", {
-        "RecordingGroup": {"AllSupported": True, "IncludeGlobalResourceTypes": False}
-    })
-
-
-def test_trail_is_multi_region_with_validation(home_t):
-    home_t.has_resource_properties("AWS::CloudTrail::Trail", {
-        "IsMultiRegionTrail": True,
-        "EnableLogFileValidation": True,
-        "IncludeGlobalServiceEvents": True,
-        "IsLogging": True,
-    })
-
-
 def test_buckets_are_private_and_tls_only(home_t):
     buckets = home_t.find_resources("AWS::S3::Bucket")
     assert len(buckets) == 3
@@ -171,3 +119,46 @@ def test_lambda_roles_have_no_admin_wildcards(home_t):
             actions = stmt["Action"] if isinstance(stmt["Action"], list) else [stmt["Action"]]
             assert "*" not in actions
             assert not any(a.endswith(":*") for a in actions if isinstance(a, str) and not a.startswith("s3:"))
+
+
+def _baseline_props(t):
+    res = [r for r in t.find_resources("AWS::CloudFormation::CustomResource").values()
+           if "LogBucketName" in r["Properties"]]
+    assert len(res) == 1
+    return res[0]["Properties"]
+
+
+def test_no_native_service_resources_that_fail_on_existing_services(home_t, region_t):
+    """One click must work on accounts that already run these services."""
+    for t in (home_t, region_t):
+        for rtype in ("AWS::GuardDuty::Detector", "AWS::SecurityHub::Hub", "AWS::SecurityHub::Standard",
+                      "AWS::Config::ConfigurationRecorder", "AWS::AccessAnalyzer::Analyzer",
+                      "AWS::CloudTrail::Trail", "AWS::SecurityHub::FindingAggregator"):
+            assert t.find_resources(rtype) == {}, rtype
+
+
+def test_baseline_function_gets_every_switch(home_t, region_t):
+    home = _baseline_props(home_t)
+    for key in ("EnableGuardDuty", "EnableSecurityHub", "EnableConfigRecorder", "EnableAccessAnalyzer",
+                "EnableInspector", "CreateTrail", "AutoFixS3AccountBlockPublicAccess", "AutoFixEbsDefaultEncryption"):
+        assert key in home, key
+    assert home["IsHomeRegion"] == "true"
+    region = _baseline_props(region_t)
+    assert region["IsHomeRegion"] == "false" and "CreateTrail" not in region
+
+
+def test_baseline_runs_after_bucket_policy_and_roles(home_t):
+    res = next(k for k, r in home_t.find_resources("AWS::CloudFormation::CustomResource").items()
+               if "LogBucketName" in r["Properties"])
+    deps = home_t.to_json()["Resources"][res]["DependsOn"]
+    assert any("LogBucketPolicy" in d for d in deps)
+    assert any("ConfigDeliveryPolicy" in d for d in deps)
+
+
+def test_baseline_role_can_create_service_linked_roles(home_t):
+    """The Inspector deploy failed without the agentless service-linked role."""
+    pols = json.dumps(home_t.find_resources("AWS::IAM::Policy"))
+    for svc in ("inspector2.amazonaws.com", "agentless.inspector2.amazonaws.com", "guardduty.amazonaws.com",
+                "securityhub.amazonaws.com", "access-analyzer.amazonaws.com"):
+        assert svc in pols, svc
+    assert '"iam:PassedToService": "config.amazonaws.com"' in pols

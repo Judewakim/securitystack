@@ -24,7 +24,7 @@
 
   <rect x="10" y="10" width="1180" height="740" rx="14" class="frame"/>
   <text x="34" y="46" class="h">Customer AWS account</text>
-  <text x="34" y="68" class="s">Deployed by SecurityStackHome (once) and SecurityStackRegion (each extra region). Every service is a switch: existing ones are left alone.</text>
+  <text x="34" y="68" class="s">Deployed by SecurityStackHome (once) and SecurityStackRegion (each extra region). Services already running are detected and left alone.</text>
 
   <!-- Home region -->
   <rect x="30" y="90" width="790" height="640" rx="10" class="region"/>
@@ -87,10 +87,10 @@
 
   <!-- Settings custom resource -->
   <rect x="55" y="600" width="460" height="100" rx="8" class="svc"/>
-  <text x="72" y="626" class="n">Settings function (custom resource)</text>
-  <text x="72" y="647" class="s">Turns on Inspector (no native CloudFormation resource exists).</text>
-  <text x="72" y="665" class="s">Opt-in only: EBS encryption by default, account-wide S3 Block Public Access.</text>
-  <text x="72" y="683" class="s">Reports failures to CloudFormation; on delete, only undoes what it did.</text>
+  <text x="72" y="626" class="n">Baseline function (one per region)</text>
+  <text x="72" y="647" class="s">Checks each service and turns on only what's missing.</text>
+  <text x="72" y="665" class="s">Records what it turned on; delete removes only that.</text>
+  <text x="72" y="683" class="s">Opt-in only: EBS default encryption, account-wide S3 Block Public Access.</text>
 
   <!-- Email -->
   <rect x="590" y="610" width="200" height="80" rx="10" class="out"/>

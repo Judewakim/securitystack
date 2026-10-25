@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SecurityStack free AWS scan</title>
-  <meta name="description" content="A free, read-only check of your AWS account for the security gaps attackers and auditors look for first.">
+  <title>SecurityStack</title>
+  <meta name="description" content="Turn on AWS security in one click: threat detection, audit logging, best-practice checks, alerts and a weekly report, without touching what you already run.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%2314213D' stroke-width='3'/%3E%3Cpath d='M10 16.5l4 4 8-9' fill='none' stroke='%230F6E8C' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="app.js"></script>
@@ -23,42 +23,64 @@
     <section id="view-landing" class="view">
       <div class="hero">
         <div class="hero-copy">
-          <h1>Find out what's exposed in your AWS account.</h1>
-          <p class="lede">A free, read-only check for the 18 security gaps attackers and auditors look for first. It takes about two minutes, and nothing in your account changes.</p>
-          <div class="actions">
-            <button type="button" class="btn primary" id="start-btn">Scan my account</button>
-            <button type="button" class="btn quiet" id="demo-btn">See a sample report</button>
+          <h1>Turn on AWS security in one click.</h1>
+          <p class="lede">SecurityStack switches on the threat detection, audit logging and compliance checks AWS already offers, wires them together, and emails you when something serious happens. One CloudFormation stack, about ten minutes, and nothing you already run is touched.</p>
+          <div class="deploy-row">
+            <label for="deploy-region" class="sr-only">Region to deploy in</label>
+            <select id="deploy-region" aria-label="Region to deploy in"></select>
+            <a class="btn primary" id="deploy-btn" href="#how" target="_blank" rel="noopener noreferrer">Deploy SecurityStack</a>
           </div>
+          <p class="hint">Opens a pre-filled CloudFormation page in your AWS account. Pick the region you use most; <a href="#more-regions">add other regions</a> afterwards. <button type="button" class="link" id="scan-first-btn">Not sure what's missing? Run a free read-only check first.</button></p>
         </div>
-        <figure class="hero-sample" aria-label="Example result: grade D">
-          <div class="stamp grade-D" aria-hidden="true"><span>D</span></div>
-          <figcaption>
-            <strong>65 out of 100</strong>
-            <span>The sample report: 1 critical and 4 high-severity issues in a typical small-company account</span>
-          </figcaption>
+        <figure class="switchboard" aria-label="What SecurityStack turns on">
+          <ul id="switches">
+            <li><span class="svc">GuardDuty</span><span class="what">threat detection</span><span class="state">On</span></li>
+            <li><span class="svc">Security Hub</span><span class="what">AWS + CIS best-practice checks</span><span class="state">On</span></li>
+            <li><span class="svc">CloudTrail</span><span class="what">audit log, every region</span><span class="state">On</span></li>
+            <li><span class="svc">AWS Config</span><span class="what">change history</span><span class="state">On</span></li>
+            <li><span class="svc">Inspector</span><span class="what">vulnerability scans</span><span class="state">On</span></li>
+            <li><span class="svc">Access Analyzer</span><span class="what">outside sharing</span><span class="state">On</span></li>
+            <li><span class="svc">Alerts</span><span class="what">email on critical findings</span><span class="state">On</span></li>
+            <li><span class="svc">Weekly report</span><span class="what">score and what to fix</span><span class="state">On</span></li>
+          </ul>
         </figure>
       </div>
 
-      <div class="trust">
+      <div class="trust" id="how">
         <div>
-          <h2>How it stays safe</h2>
-          <ul class="plain">
-            <li>You create a role that can read 26 specific security settings, listed in the template. It can't change anything, open files or databases, or see Lambda environment variables and EC2 user data.</li>
-            <li>Only our scanner can use that role, and only with a one-time code made for your scan.</li>
-            <li>No passwords or access keys are ever entered here.</li>
-            <li>Scan results are deleted within two days. Delete the role when you're done.</li>
-          </ul>
+          <h2>What happens when you deploy</h2>
+          <ol class="plain">
+            <li>Each service is checked first. Anything you already run is left exactly as it is; only what's missing is turned on.</li>
+            <li>Findings from every region flow into one place, and new critical or high-severity issues are emailed to you once.</li>
+            <li>Every Monday you get a posture score and the top issues to fix, as an email and a report you can hand to an auditor or insurer.</li>
+            <li>Deleting the stack removes only what SecurityStack added. Your logs are kept.</li>
+          </ol>
         </div>
         <div>
-          <h2>What it checks</h2>
-          <p>Root account protection, MFA, old access keys, admin-level policies, public S3 buckets, open SSH/RDP and database ports, public or unencrypted databases, disk encryption, and whether CloudTrail, GuardDuty, Security Hub, Config, Inspector and Access Analyzer are on, in every region you use.</p>
+          <h2>What it won't do</h2>
+          <ul class="plain">
+            <li>Change your existing resources. Two optional fixes (EBS encryption by default, account-wide S3 Block Public Access) stay off unless you turn them on.</li>
+            <li>Send your data anywhere. Everything runs in your account; nothing calls home.</li>
+            <li>Make you compliant on its own. It supports evidence for SOC 2 and ISO 27001 controls.</li>
+          </ul>
+          <p id="more-regions"><strong>Cost:</strong> the AWS services bill your account directly, typically $20–45 a month for a small account, after 15–30 day free trials. <a href="https://github.com/Judewakim/securitystack#what-it-costs" target="_blank" rel="noopener noreferrer">See the breakdown</a>. Extra regions: deploy the <a id="region-template-link" href="https://github.com/Judewakim/securitystack/blob/main/docs/deploying.md" target="_blank" rel="noopener noreferrer">region stack</a> in each one.</p>
+        </div>
+      </div>
+
+      <div class="check-first">
+        <h2>Check your account first</h2>
+        <p>A free, read-only scan of 18 common security gaps, in about two minutes. You'll see what SecurityStack would fix and what needs your attention.</p>
+        <div class="actions">
+          <button type="button" class="btn quiet" id="start-btn">Run the free check</button>
+          <button type="button" class="btn quiet" id="demo-btn">See a sample report</button>
         </div>
       </div>
     </section>
 
     <!-- Wizard -->
     <section id="view-wizard" class="view" hidden>
-      <h1 class="page-title">Scan your AWS account</h1>
+      <h1 class="page-title">Free read-only check</h1>
+      <p class="lede">Two minutes, nothing changes in your account. You create a role that can only read 26 security settings; delete it when you're done.</p>
       <ol class="steps">
         <li class="step" id="step-role">
           <h2>Create the read-only role</h2>

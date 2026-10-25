@@ -11,7 +11,7 @@ There are two separate things to deploy:
 
 ### Option A: Launch Stack (no tools needed)
 
-1. Open the home template in the region you use most. The free scan builds this link for you with the right switches set; otherwise use the template from the latest GitHub release.
+1. Open the home template in the region you use most: use the **Deploy SecurityStack** button on the site, or the template from the latest GitHub release.
 2. Enter an email for alerts, review the switches, tick the IAM acknowledgement and create the stack.
 3. **Confirm the subscription email** AWS sends, or you won't get alerts.
 4. For each extra region, launch `securitystack-region.template.json` there and paste the home stack's `LogBucketName` output into `ConfigBucketName`.
@@ -29,11 +29,11 @@ npx cdk deploy SecurityStackRegion-us-west-2 -c regions=us-west-2 \
 
 ### If a service is already on
 
-CloudFormation can't take over an existing GuardDuty detector, Security Hub, Config recorder or Access Analyzer; creating a second one fails. Set that service's `Enable…` parameter to `false`. The free scan does this for you in the link it gives you.
+Nothing to do. The stack checks each service first and only turns on what's missing; anything you already run (GuardDuty, Security Hub, a Config recorder, an Access Analyzer, a multi-region trail) is left exactly as it is. To keep SecurityStack away from a service entirely, set its `Enable…` parameter to `false`.
 
 ### Removing it
 
-Delete the region stacks, then the home stack. Detection services, rules, alerts and the digest are removed. The **log and report buckets are kept on purpose** (they're audit evidence); empty and delete them yourself if you don't need them. Inspector is only turned off if SecurityStack was the one that turned it on. Opt-in auto-fixes (EBS default encryption, S3 Block Public Access) stay on, since turning them off would weaken the account.
+Delete the region stacks, then the home stack. Everything SecurityStack turned on is removed (services you already had are left on), along with its rules, alerts and digest. The **log and report buckets are kept on purpose** (they're audit evidence); empty and delete them yourself if you don't need them. Inspector is only turned off if SecurityStack was the one that turned it on. Opt-in auto-fixes (EBS default encryption, S3 Block Public Access) stay on, since turning them off would weaken the account.
 
 ## The free-scan service (operator only)
 

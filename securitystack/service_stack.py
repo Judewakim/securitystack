@@ -248,7 +248,14 @@ class ScanServiceStack(Stack):
         )
         s3deploy.BucketDeployment(
             self, "DeploySite",
-            sources=[s3deploy.Source.asset(str(ROOT / "web"))],
+            sources=[
+                s3deploy.Source.asset(str(ROOT / "web")),
+                # Lets the landing page build its "Deploy" links without hard-coding URLs.
+                s3deploy.Source.json_data("config.json", {
+                    "homeTemplateUrl": f"{templates_base}/securitystack-home.template.json",
+                    "regionTemplateUrl": f"{templates_base}/securitystack-region.template.json",
+                }),
+            ],
             destination_bucket=site,
             distribution=distribution,
             distribution_paths=["/*"],

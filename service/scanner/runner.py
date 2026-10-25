@@ -66,27 +66,12 @@ def score(results):
     return value, grade
 
 
-def baseline_launch_url(template_url, home_region, home_services, multi_region_trail):
-    """Pre-filled Launch Stack link: services that already exist are switched off,
-    because CloudFormation would fail trying to create a second one."""
+def baseline_launch_url(template_url, home_region):
+    """One-click Launch Stack link for the baseline. No switches to set: the stack
+    detects which services are already on and leaves them alone."""
     if not template_url:
         return None
-    def create(key):
-        # Only ask CloudFormation to create a service we *know* is absent. If the
-        # scan couldn't tell (access denied), leave it off so the stack can't fail.
-        return "true" if home_services.get(key) is False else "false"
-
-    params = {
-        "stackName": "SecurityStack",
-        "templateURL": template_url,
-        "param_EnableGuardDuty": create("guardDuty"),
-        "param_EnableSecurityHub": create("securityHub"),
-        "param_EnableConfigRecorder": create("configRecorder"),
-        "param_EnableAccessAnalyzer": create("accessAnalyzer"),
-        "param_EnableInspector": create("inspector"),
-        # Unknown trail status -> don't create one (a duplicate trail is billed).
-        "param_CreateTrail": "true" if multi_region_trail is False else "false",
-    }
+    params = {"stackName": "SecurityStack", "templateURL": template_url}
     return (
         f"https://{home_region}.console.aws.amazon.com/cloudformation/home?region={home_region}"
         f"#/stacks/quickcreate?{urllib.parse.urlencode(params)}"
@@ -107,7 +92,7 @@ def run_scan(session, home_region="us-east-1", regions=None, baseline_template_u
     _guard(results, ("root-mfa", "root-access-keys", "console-users-mfa", "stale-access-keys", "password-policy", "admin-policies"),
            checks.check_identity, s, results)
     _guard(results, ("s3-account-bpa", "s3-public-buckets"), checks.check_s3, s, results, account_id)
-    trail = _guard(results, ("cloudtrail",), checks.check_cloudtrail, s, results, home_region) or {"multiRegionTrail": None}
+    _guard(results, ("cloudtrail",), checks.check_cloudtrail, s, results, home_region)
 
     def scan_region(region):
         return checks.check_region(s.fork(), region, results)
@@ -147,7 +132,5 @@ def run_scan(session, home_region="us-east-1", regions=None, baseline_template_u
         "fixableBySecurityStack": sum(1 for r in failing if r.check.fixed_by_securitystack),
         "checks": [r.to_dict() for r in ordered],
         "servicesByRegion": services_by_region,
-        "baselineLaunchUrl": baseline_launch_url(
-            baseline_template_url, home_region, services_by_region.get(home_region, {}), trail["multiRegionTrail"]
-        ),
+        "baselineLaunchUrl": baseline_launch_url(baseline_template_url, home_region),
     }

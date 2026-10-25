@@ -282,6 +282,58 @@ function downloadJson() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ------------------------------------------------------------------ landing
+
+const DEPLOY_DOCS = "https://github.com/Judewakim/securitystack/blob/main/docs/deploying.md";
+const site = { config: null };
+
+function launchUrl(templateUrl, region, stackName) {
+  const params = new URLSearchParams({ stackName, templateURL: templateUrl });
+  return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${params}`;
+}
+
+function isTemplateUrl(u) {
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" && /\.s3[.-]([a-z0-9-]+\.)?amazonaws\.com$/.test(url.hostname);
+  } catch { return false; }
+}
+
+function updateDeployLink() {
+  const btn = $("deploy-btn");
+  const region = $("deploy-region").value;
+  const cfg = site.config;
+  if (cfg && isTemplateUrl(cfg.homeTemplateUrl)) {
+    btn.href = launchUrl(cfg.homeTemplateUrl, region, "SecurityStack");
+  } else {
+    btn.href = DEPLOY_DOCS; // local preview, or config missing: send people to the guide
+  }
+}
+
+async function initLanding() {
+  // Reuse the wizard's region list so there's one source of truth.
+  $("deploy-region").replaceChildren(...[...$("region").options].map((o) => new Option(o.textContent, o.value)));
+  $("deploy-region").addEventListener("change", updateDeployLink);
+  try {
+    const res = await fetch("config.json", { credentials: "same-origin", cache: "no-store" });
+    if (res.ok) site.config = await res.json();
+  } catch { /* fine: falls back to the guide */ }
+  if (site.config && isTemplateUrl(site.config.regionTemplateUrl)) {
+    $("region-template-link").href = site.config.regionTemplateUrl;
+  }
+  updateDeployLink();
+
+  // The page's one orchestrated moment: services switch on, one after another.
+  const items = [...document.querySelectorAll("#switches li")];
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) return;
+  items.forEach((li) => { li.classList.add("off"); li.querySelector(".state").textContent = "Off"; });
+  items.forEach((li, i) => setTimeout(() => {
+    li.classList.remove("off");
+    li.querySelector(".state").textContent = "On";
+  }, 500 + i * 140));
+}
+
 // -------------------------------------------------------------------- wiring
 
 function startWizard() {
@@ -293,7 +345,9 @@ window.addEventListener("beforeprint", () => document.querySelectorAll("#view-re
 window.addEventListener("afterprint", () => document.querySelectorAll("#view-results details").forEach((d) => { d.open = d.dataset.wasOpen === "true"; }));
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initLanding();
   $("start-btn").addEventListener("click", startWizard);
+  $("scan-first-btn").addEventListener("click", startWizard);
   $("demo-btn").addEventListener("click", showDemo);
   $("demo-to-scan").addEventListener("click", startWizard);
   $("back-btn").addEventListener("click", () => show("landing"));

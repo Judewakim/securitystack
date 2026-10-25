@@ -87,7 +87,7 @@ p { margin: 0 0 var(--s3); max-width: var(--measure); }
 .btn.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
 .btn.quiet:hover { border-color: var(--ink-soft); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
-.link { background: none; border: 0; padding: 0; color: var(--action); font: inherit; text-decoration: underline; cursor: pointer; }
+.link { background: none; border: 0; padding: 0; color: var(--action); font: inherit; text-align: left; text-decoration: underline; cursor: pointer; }
 
 /* ---------- the stamp: the one bold element */
 .stamp {
@@ -113,18 +113,43 @@ p { margin: 0 0 var(--s3); max-width: var(--measure); }
 @media (prefers-reduced-motion: reduce) { .stamp.landed { animation: none; } }
 
 /* ---------- landing */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.deploy-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); align-items: stretch; }
+.deploy-row select { width: auto; max-width: 100%; min-height: 2.875rem; }
+.hero .hint { margin-top: var(--s3); }
+
+/* The one bold element: a switchboard of services flipping on. */
+.switchboard {
+  margin: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 12px;
+  padding: var(--s2) var(--s4); min-width: 21rem;
+}
+#switches { list-style: none; margin: 0; padding: 0; }
+#switches li {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "svc state" "what state";
+  column-gap: var(--s3); align-items: center;
+  padding: 0.6rem 0; border-top: 1px solid var(--rule);
+}
+#switches li:first-child { border-top: 0; }
+#switches .svc { grid-area: svc; font-weight: 700; }
+#switches .what { grid-area: what; color: var(--ink-soft); font-size: 0.875rem; }
+#switches .state {
+  grid-area: state; min-width: 3.25rem; text-align: center;
+  font-weight: 750; font-size: 0.8125rem; padding: 0.3rem 0.6rem; border-radius: 999px;
+  background: var(--pass); color: var(--sheet);
+  transition: background-color 220ms ease, color 220ms ease;
+}
+#switches li.off .state { background: var(--rule); color: var(--ink-soft); }
+@media (prefers-reduced-motion: reduce) { #switches .state { transition: none; } }
+
+.check-first { border-top: 1px solid var(--rule); margin-top: var(--s5); padding-top: var(--s5); }
+.check-first .actions { margin-top: var(--s3); }
+ol.plain { margin: 0; padding-left: 1.2rem; }
+ol.plain li { margin-bottom: var(--s2); max-width: var(--measure); }
 .hero {
   display: grid; gap: var(--s5); align-items: center;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: var(--s5) 0 var(--s6);
 }
-.hero-sample {
-  margin: 0; display: grid; justify-items: center; gap: var(--s3);
-  padding: var(--s4); background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px;
-  max-width: 17rem; text-align: center;
-}
-.hero-sample figcaption { display: grid; gap: 0.25rem; font-size: 0.9375rem; color: var(--ink-soft); }
-.hero-sample figcaption strong { color: var(--ink); font-size: 1.0625rem; }
 
 .trust {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5);
@@ -218,9 +243,7 @@ main > section > section, #view-results > section { margin-bottom: var(--s5); }
 /* ---------- small screens */
 @media (max-width: 720px) {
   .hero { grid-template-columns: 1fr; padding-top: var(--s4); }
-  .hero-sample { max-width: none; grid-template-columns: auto 1fr; justify-items: start; text-align: left; align-items: center; }
-  .hero-sample .stamp { width: 6rem; height: 6rem; border-width: 4px; }
-  .hero-sample .stamp span { font-size: 3.25rem; }
+  .switchboard { min-width: 0; }
   .trust { grid-template-columns: 1fr; gap: var(--s4); }
   .verdict { flex-direction: column; align-items: flex-start; gap: var(--s4); }
   .step { padding: var(--s3) var(--s3) var(--s3) 3.5rem; }

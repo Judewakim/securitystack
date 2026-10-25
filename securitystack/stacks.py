@@ -53,16 +53,19 @@ class SecurityStackHome(Stack):
         regional = RegionalBaseline(
             self,
             "Regional",
-            config_bucket_name=home.log_bucket.bucket_name,
+            log_bucket_name=home.log_bucket.bucket_name,
             is_home_region=True,
-            s3_account_bpa=home.p_s3_bpa.value_as_string,
+            home_props={
+                "CreateTrail": home.p_trail.value_as_string,
+                "AutoFixS3AccountBlockPublicAccess": home.p_s3_bpa.value_as_string,
+            },
+            depends_on=[home.log_bucket],  # includes its bucket policy (CloudTrail/Config writes)
         )
-        home.add_finding_aggregator(regional.hub, regional.securityhub_condition)
         self.home, self.regional = home, regional
 
         _interface(self, [
             ("Alerts and logging", home.params[:3]),
-            ("Services (set false for any already turned on in this region)", regional.params[:5]),
+            ("Services (anything already running is detected and left alone)", regional.params[:5]),
             ("Opt-in auto-fixes (off by default; these change existing settings)", [regional.params[5], home.p_s3_bpa]),
         ])
         Tags.of(self).add("securitystack", "home")
@@ -85,12 +88,12 @@ class SecurityStackRegion(Stack):
         )
         p_bucket.override_logical_id("ConfigBucketName")
         regional = RegionalBaseline(
-            self, "Regional", config_bucket_name=p_bucket.value_as_string, is_home_region=False
+            self, "Regional", log_bucket_name=p_bucket.value_as_string, is_home_region=False
         )
         self.regional = regional
         _interface(self, [
             ("Home stack", [p_bucket]),
-            ("Services (set false for any already turned on in this region)", regional.params[:5]),
+            ("Services (anything already running is detected and left alone)", regional.params[:5]),
             ("Opt-in auto-fixes (off by default)", [regional.params[5]]),
         ])
         Tags.of(self).add("securitystack", "region")

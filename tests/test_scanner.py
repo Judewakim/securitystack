@@ -124,20 +124,8 @@ def test_full_scan_shape(insecure_account):
     assert statuses == sorted(statuses, key={"FAIL": 0, "UNKNOWN": 1, "PASS": 2}.get)
     url = result["baselineLaunchUrl"]
     assert url.startswith("https://us-east-1.console.aws.amazon.com/cloudformation/")
-    assert "param_EnableGuardDuty=true" in url
+    assert "stackName=SecurityStack" in url and "param_" not in url  # no switches needed
     json.dumps(result)  # must be serializable for S3
-
-
-def test_launch_url_disables_services_that_already_exist():
-    url = baseline_launch_url(
-        "https://b/t.json", "us-west-2", {"guardDuty": True, "securityHub": True, "configRecorder": False}, True
-    )
-    q = urllib.parse.parse_qs(url.split("?", 2)[-1])
-    assert q["param_EnableGuardDuty"] == ["false"]
-    assert q["param_EnableSecurityHub"] == ["false"]
-    assert q["param_EnableConfigRecorder"] == ["true"]
-    assert q["param_EnableAccessAnalyzer"] == ["false"]  # unknown -> don't risk a failed stack
-    assert q["param_CreateTrail"] == ["false"]
 
 
 def test_unknown_checks_do_not_count_toward_score():
@@ -229,11 +217,6 @@ def test_cloudtrail_without_management_events_fails():
     assert not checks._logs_management_events({"EventSelectors": [{"IncludeManagementEvents": False}]})
     assert not checks._logs_management_events({"EventSelectors": [{"IncludeManagementEvents": True, "ReadWriteType": "ReadOnly"}]})
     assert checks._logs_management_events({"AdvancedEventSelectors": [{"FieldSelectors": [{"Field": "eventCategory", "Equals": ["Management"]}]}]})
-
-
-def test_unknown_trail_does_not_create_duplicate():
-    url = baseline_launch_url("https://b/t.json", "us-east-1", {}, None)
-    assert "param_CreateTrail=false" in url
 
 
 def test_legacy_eu_bucket_location_maps_to_region():
