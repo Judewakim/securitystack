@@ -4,6 +4,8 @@
 
 Small companies on AWS usually have no one whose job is security. The services that would catch a leaked key or a public bucket (GuardDuty, Security Hub, Config, Inspector, CloudTrail) are all there, but they're off, and turning them on correctly across regions is a day of work most teams never get to. SecurityStack does it in one deployment. It then sends a plain-English email when something serious happens, plus a weekly report you can hand to an auditor, a customer's security questionnaire, or a cyber insurer.
 
+**Live site:** [d2eelnvipxf0ax.cloudfront.net](https://d2eelnvipxf0ax.cloudfront.net/): deploy in one click, or run the free check.
+
 ![SecurityStack site](docs/screenshot-landing.png)
 
 - **The security layer (the product):** CloudFormation templates, built with the AWS CDK in Python, that turn on and wire up AWS's own security services. [What it deploys](#what-the-baseline-deploys)
@@ -46,7 +48,7 @@ Scan results are deleted within about 48 hours, with no backups. Operational log
 
 ## Deploy
 
-**Fastest:** run the free scan and use the Deploy button on your results page. **Other ways** (Launch Stack, CDK CLI, additional regions, removal): [docs/deploying.md](docs/deploying.md).
+**Fastest:** pick a region and click **Deploy SecurityStack** on the [live site](https://d2eelnvipxf0ax.cloudfront.net/), or download the templates from the [latest release](https://github.com/Judewakim/securitystack/releases/latest). **Other ways** (Launch Stack, CDK CLI, additional regions, removal): [docs/deploying.md](docs/deploying.md).
 
 ## What it costs
 
