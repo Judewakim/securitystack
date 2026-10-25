@@ -259,3 +259,13 @@ def test_send_response_payload(monkeypatch):
     baseline.send_response(event("Create"), FakeContext(), "SUCCESS", {"a": "b"})
     assert captured["method"] == "PUT"
     assert b'"PhysicalResourceId": "securitystack-baseline-us-east-1"' in captured["body"]
+
+
+def test_install_time_recorded_on_create_and_cleared_on_delete(aws):
+    ssm = boto3.client("ssm", region_name="us-east-1")
+    run(aws, "Create")
+    assert int(ssm.get_parameter(Name="/securitystack/SecurityStackHome/installedAt")["Parameter"]["Value"]) > 0
+    run(aws, "Delete")
+    import pytest as _p
+    with _p.raises(ClientError):
+        ssm.get_parameter(Name="/securitystack/SecurityStackHome/installedAt")

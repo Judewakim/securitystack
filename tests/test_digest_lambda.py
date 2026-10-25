@@ -110,3 +110,29 @@ def test_handler_writes_report_and_emails(monkeypatch):
     summary_key = next(k for k in keys if k.endswith("summary.json"))
     body = json.loads(s3.get_object(Bucket="reports", Key=summary_key)["Body"].read())
     assert body["score"] == result["score"]
+
+
+@mock_aws
+def test_first_report_sends_once_after_a_day(monkeypatch):
+    import time as _t
+
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket="reports")
+    sns = boto3.client("sns", region_name="us-east-1")
+    topic = sns.create_topic(Name="alerts")["TopicArn"]
+    ssm = boto3.client("ssm", region_name="us-east-1")
+    monkeypatch.setenv("REPORTS_BUCKET", "reports")
+    monkeypatch.setenv("TOPIC_ARN", topic)
+    monkeypatch.setenv("STATE_PREFIX", "/securitystack/S")
+    real_client = boto3.client
+    monkeypatch.setattr(digest.boto3, "client",
+                        lambda name, *a, **kw: Paged(SAMPLE) if name == "securityhub" else real_client(name, *a, **kw))
+
+    ssm.put_parameter(Name="/securitystack/S/installedAt", Value=str(int(_t.time()) - 3600), Type="String")
+    assert digest.handler({"mode": "first"}, FakeContext()) == {"skipped": "first report not due"}  # too early
+
+    ssm.put_parameter(Name="/securitystack/S/installedAt", Value=str(int(_t.time()) - 25 * 3600), Type="String", Overwrite=True)
+    assert "report" in digest.handler({"mode": "first"}, FakeContext())
+    assert ssm.get_parameter(Name="/securitystack/S/firstReportSent")
+    assert digest.handler({"mode": "first"}, FakeContext()) == {"skipped": "first report not due"}  # only once
+    assert "report" in digest.handler({}, FakeContext())  # weekly runs are unaffected

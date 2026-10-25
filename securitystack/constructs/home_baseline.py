@@ -191,6 +191,10 @@ class HomeBaseline(Construct):
                 },
             ),
         )
+        # Per-stack state written by the baseline function (install time, first-report flag).
+        state_prefix = f"/securitystack/{Aws.STACK_NAME}"
+        state_arn = f"arn:{Aws.PARTITION}:ssm:{Aws.REGION}:{Aws.ACCOUNT_ID}:parameter/securitystack/{Aws.STACK_NAME}"
+
         alerter_logs = logs.LogGroup(self, "AlerterLogs", retention=logs.RetentionDays.ONE_YEAR)
         alerter_role = iam.Role(
             self, "AlerterRole", assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
@@ -199,6 +203,7 @@ class HomeBaseline(Construct):
         alerter_logs.grant_write(alerter_role)
         self.topic.grant_publish(alerter_role)
         alerter_role.add_to_policy(iam.PolicyStatement(actions=["securityhub:BatchUpdateFindings"], resources=["*"]))
+        alerter_role.add_to_policy(iam.PolicyStatement(actions=["ssm:GetParameter"], resources=[f"{state_arn}/installedAt"]))
         alerter = lambda_.Function(
             self,
             "AlerterFunction",
@@ -208,7 +213,7 @@ class HomeBaseline(Construct):
             timeout=Duration.seconds(30),
             role=alerter_role,
             log_group=alerter_logs,
-            environment={"TOPIC_ARN": self.topic.topic_arn},
+            environment={"TOPIC_ARN": self.topic.topic_arn, "INSTALLED_AT_PARAM": f"{state_prefix}/installedAt"},
             description="SecurityStack: send one email per new HIGH/CRITICAL finding",
         )
         for rule in (alert_rule, threat_rule):
@@ -227,6 +232,10 @@ class HomeBaseline(Construct):
         )
         digest_logs.grant_write(digest_role)
         digest_role.add_to_policy(iam.PolicyStatement(actions=["securityhub:GetFindings"], resources=["*"]))
+        digest_role.add_to_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter", "ssm:PutParameter"],
+            resources=[f"{state_arn}/installedAt", f"{state_arn}/firstReportSent"],
+        ))
         self.reports_bucket.grant_put(digest_role, "reports/*")
         self.topic.grant_publish(digest_role)
 
@@ -240,7 +249,8 @@ class HomeBaseline(Construct):
             memory_size=512,
             role=digest_role,
             log_group=digest_logs,
-            environment={"REPORTS_BUCKET": self.reports_bucket.bucket_name, "TOPIC_ARN": self.topic.topic_arn},
+            environment={"REPORTS_BUCKET": self.reports_bucket.bucket_name, "TOPIC_ARN": self.topic.topic_arn,
+                         "STATE_PREFIX": state_prefix},
             description="SecurityStack weekly posture report",
         )
         events.Rule(
@@ -249,6 +259,13 @@ class HomeBaseline(Construct):
             description="SecurityStack weekly report (Mondays 13:00 UTC)",
             schedule=events.Schedule.cron(minute="0", hour="13", week_day="MON"),
             targets=[targets.LambdaFunction(digest)],
+        )
+        events.Rule(
+            self,
+            "FirstReportCheck",
+            description="SecurityStack: send the one-time first report a day after install (no-op afterwards)",
+            schedule=events.Schedule.rate(Duration.hours(6)),
+            targets=[targets.LambdaFunction(digest, event=events.RuleTargetInput.from_object({"mode": "first"}))],
         )
         self.digest_function = digest
 

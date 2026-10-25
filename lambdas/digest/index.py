@@ -166,8 +166,32 @@ def render_email(summary, account_id, report_link, truncated):
     return "\n".join(lines)
 
 
+FIRST_REPORT_AFTER = 24 * 3600
+
+
+def first_report_due(ssm, prefix, now_ts):
+    """The 'first report' runs on a 6-hourly schedule but sends exactly once, a day after install."""
+    try:
+        installed = int(ssm.get_parameter(Name=f"{prefix}/installedAt")["Parameter"]["Value"])
+    except Exception:
+        return False
+    if now_ts - installed < FIRST_REPORT_AFTER:
+        return False
+    try:
+        ssm.get_parameter(Name=f"{prefix}/firstReportSent")
+        return False
+    except ssm.exceptions.ParameterNotFound:
+        return True
+
+
 def handler(event, context):
     region = os.environ.get("AWS_REGION", "us-east-1")
+    first = (event or {}).get("mode") == "first"
+    prefix = os.environ.get("STATE_PREFIX", "")
+    ssm = boto3.client("ssm", region_name=region) if prefix else None
+    if first:
+        if not ssm or not first_report_due(ssm, prefix, int(dt.datetime.now(dt.timezone.utc).timestamp())):
+            return {"skipped": "first report not due"}
     bucket = os.environ["REPORTS_BUCKET"]
     topic_arn = os.environ.get("TOPIC_ARN", "")
     account_id = context.invoked_function_arn.split(":")[4] if context else "unknown"
@@ -195,11 +219,19 @@ def handler(event, context):
     report_link = f"https://s3.console.aws.amazon.com/s3/object/{bucket}?region={region}&prefix={html_key}"
 
     if topic_arn:
+        score = summary["score"] if summary["score"] is not None else "n/a"
+        body = render_email(summary, account_id, report_link, truncated)
+        if first:
+            body = ("SecurityStack has finished its first full pass over your account. Everything below was "
+                    "already there before SecurityStack was installed; from now on you'll get an email only "
+                    "when something new and serious appears, plus this report every Monday.\n\n") + body
         boto3.client("sns", region_name=region).publish(
             TopicArn=topic_arn,
-            Subject=f"SecurityStack weekly report: score {summary['score'] if summary['score'] is not None else 'n/a'}",
-            Message=render_email(summary, account_id, report_link, truncated),
+            Subject=(f"Your first SecurityStack report: score {score}" if first else f"SecurityStack weekly report: score {score}"),
+            Message=body,
         )
+    if first:
+        ssm.put_parameter(Name=f"{prefix}/firstReportSent", Value=now.isoformat(), Type="String", Overwrite=True)
 
     LOG.info("Report written to s3://%s/%s", bucket, html_key)
     return {"report": f"s3://{bucket}/{html_key}", "score": summary["score"], "open_total": summary["open_total"]}

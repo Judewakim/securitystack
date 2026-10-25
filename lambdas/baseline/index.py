@@ -353,6 +353,29 @@ class Baseline:
         ledger.save()
 
 
+def record_install_time(session, region, stack_name):
+    """Alerts stay quiet for the first day (setup finds every existing issue at once)."""
+    import time
+
+    try:
+        session.client("ssm", region_name=region).put_parameter(
+            Name=f"/securitystack/{stack_name}/installedAt", Value=str(int(time.time())), Type="String", Overwrite=False
+        )
+    except ClientError as e:
+        if _code(e) != "ParameterAlreadyExists":
+            raise
+
+
+def clear_install_state(session, region, stack_name):
+    """So a later reinstall gets its own quiet day and first report."""
+    ssm = session.client("ssm", region_name=region)
+    for key in ("installedAt", "firstReportSent"):
+        try:
+            ssm.delete_parameter(Name=f"/securitystack/{stack_name}/{key}")
+        except ClientError:
+            pass
+
+
 def handler(event, context, session=None):
     LOG.info("Event: %s", json.dumps({k: v for k, v in event.items() if k != "ResponseURL"}))
     session = session or boto3.session.Session()
@@ -369,10 +392,15 @@ def handler(event, context, session=None):
 
     if event["RequestType"] == "Delete":
         baseline.remove(ledger)
+        if baseline.home:
+            clear_install_state(session, props["Region"], stack_name)
         return send_response(event, context, "SUCCESS")
 
     try:
+        if event["RequestType"] == "Create" and baseline.home:
+            record_install_time(session, props["Region"], stack_name)
         baseline.apply(ledger)
+        LOG.info("Result: %s", json.dumps(baseline.notes))
         send_response(event, context, "SUCCESS", data={k: str(v) for k, v in baseline.notes.items()})
     except Exception as exc:
         LOG.exception("Baseline failed")
