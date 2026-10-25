@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       deploy_baseline:
-        description: Deploy the SecurityStack baseline into the staging account too
+        description: Also deploy the SecurityStack baseline into the staging account (costs ~$20-45/month after free trials)
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
