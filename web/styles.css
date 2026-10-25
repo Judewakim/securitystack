@@ -3,19 +3,22 @@
    (strict CSP, no third-party requests). */
 
 :root {
-  --paper: #f3f5f7;
+  /* Palette taken from the SecurityStack shield: charcoal outline, radar red. */
+  --paper: #f5f5f4;
   --sheet: #ffffff;
-  --ink: #14213d;
-  --ink-soft: #4b5568;
-  --rule: #d5dbe3;
-  --action: #0f6e8c;
+  --ink: #2b2b2b;
+  --ink-soft: #5c5c5c;
+  --rule: #dddcdb;
+  --action: #c0392f;      /* logo red, darkened slightly for readable white text */
   --action-ink: #ffffff;
-  --critical: #b42318;
-  --high: #b9500b;
-  --medium: #8a6a00;
-  --low: #4a6a8a;
-  --pass: #2e7d4f;
-  --focus: #f0b429;
+  --brand-ink: #474747;   /* logo charcoal */
+  /* Severity keeps its own scale; "critical" is a deeper maroon so it never reads as a button. */
+  --critical: #8c1d18;
+  --high: #b4530e;
+  --medium: #7f6400;
+  --low: #4f5b66;
+  --pass: #2e7448;
+  --focus: #2b2b2b;
 
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --measure: 66ch;
@@ -25,18 +28,20 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0f1726;
-    --sheet: #172238;
-    --ink: #e8edf4;
-    --ink-soft: #a7b3c4;
-    --rule: #2c3a52;
-    --action: #3aa7c9;
-    --action-ink: #06202a;
-    --critical: #ff7a6e;
-    --high: #f59b52;
-    --medium: #e3c24a;
-    --low: #93b0cf;
-    --pass: #63c58f;
+    --paper: #1d1d1d;
+    --sheet: #282828;
+    --ink: #eeeeee;
+    --ink-soft: #b0b0b0;
+    --rule: #3a3a3a;
+    --action: #ef7469;
+    --action-ink: #1d1d1d;
+    --brand-ink: #d6d6d6;
+    --critical: #ff8a80;
+    --high: #f2a061;
+    --medium: #e2c35a;
+    --low: #a9b6c3;
+    --pass: #6cc28f;
+    --focus: #eeeeee;
   }
 }
 
@@ -60,10 +65,11 @@ a { color: var(--action); text-underline-offset: 0.15em; }
 /* ---------- frame */
 header.site, footer.site, main { max-width: 64rem; margin: 0 auto; padding: 0 1rem; }
 header.site {
-  display: flex; justify-content: space-between; align-items: baseline;
+  display: flex; justify-content: space-between; align-items: center;
   padding-top: var(--s4); padding-bottom: var(--s4);
 }
-.brand { font-weight: 750; letter-spacing: -0.01em; font-size: 1.125rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.6rem; font-weight: 750; letter-spacing: -0.01em; font-size: 1.125rem; color: var(--brand-ink); }
+.brand img { width: 2rem; height: 2rem; }
 header.site nav a { color: var(--ink-soft); font-size: 0.9375rem; }
 footer.site { color: var(--ink-soft); font-size: 0.875rem; padding-top: var(--s6); padding-bottom: var(--s5); }
 footer.site p { max-width: var(--measure); }
@@ -135,7 +141,7 @@ p { margin: 0 0 var(--s3); max-width: var(--measure); }
 #switches .state {
   grid-area: state; min-width: 3.25rem; text-align: center;
   font-weight: 750; font-size: 0.8125rem; padding: 0.3rem 0.6rem; border-radius: 999px;
-  background: var(--pass); color: var(--sheet);
+  background: var(--action); color: var(--action-ink);
   transition: background-color 220ms ease, color 220ms ease;
 }
 #switches li.off .state { background: var(--rule); color: var(--ink-soft); }

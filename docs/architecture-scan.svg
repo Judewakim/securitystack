@@ -2,21 +2,21 @@
   <title id="t">SecurityStack free scan architecture</title>
   <desc id="d">The hosted free scan: a static site and API behind CloudFront, an async worker that assumes a read-only role in the visitor's account using a per-scan External ID.</desc>
   <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#14213d"/></marker>
-    <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f6e8c"/></marker>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2b2b2b"/></marker>
+    <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392f"/></marker>
     <style>
-      .frame{fill:#f3f5f7;stroke:#14213d;stroke-width:2}
-      .visitor{fill:#fff;stroke:#b9500b;stroke-width:2}
-      .svc{fill:#fff;stroke:#14213d;stroke-width:1.6}
-      .hub{fill:#e6f2f6;stroke:#0f6e8c;stroke-width:2}
+      .frame{fill:#f5f5f4;stroke:#2b2b2b;stroke-width:2}
+      .visitor{fill:#fff;stroke:#474747;stroke-width:2}
+      .svc{fill:#fff;stroke:#2b2b2b;stroke-width:1.6}
+      .hub{fill:#fbeceb;stroke:#c0392f;stroke-width:2}
       .store{fill:#fff7e6;stroke:#8a6a00;stroke-width:1.6}
-      .h{font-size:20px;font-weight:750;fill:#14213d}
-      .n{font-size:14px;font-weight:650;fill:#14213d}
-      .s{font-size:12px;fill:#4b5568}
-      .l{fill:none;stroke:#14213d;stroke-width:1.6}
-      .lt{fill:none;stroke:#0f6e8c;stroke-width:2}
-      .ld{fill:none;stroke:#0f6e8c;stroke-width:2;stroke-dasharray:7 5}
-      .lab{font-size:12px;fill:#0f6e8c;font-weight:600}
+      .h{font-size:20px;font-weight:750;fill:#2b2b2b}
+      .n{font-size:14px;font-weight:650;fill:#2b2b2b}
+      .s{font-size:12px;fill:#5c5c5c}
+      .l{fill:none;stroke:#2b2b2b;stroke-width:1.6}
+      .lt{fill:none;stroke:#c0392f;stroke-width:2}
+      .ld{fill:none;stroke:#c0392f;stroke-width:2;stroke-dasharray:7 5}
+      .lab{font-size:12px;fill:#c0392f;font-weight:600}
     </style>
   </defs>
 
@@ -59,7 +59,7 @@
 
   <rect x="275" y="440" width="200" height="80" rx="10" class="hub"/>
   <text x="292" y="467" class="n">Scan worker</text>
-  <text x="292" y="486" class="s">async, 10 concurrent max</text>
+  <text x="292" y="486" class="s">async, per-IP rate limits</text>
   <text x="292" y="502" class="s">18 checks, all regions</text>
   <path d="M375 380 V438" class="lt" marker-end="url(#at)"/>
   <text x="383" y="414" class="lab">invoke (async)</text>
@@ -77,13 +77,13 @@
   <text x="275" y="590" class="s">Every stack passes cdk-nag (AWS Solutions rules); each exception has a written reason in the code.</text>
 
   <!-- Visitor account -->
-  <rect x="910" y="10" width="270" height="620" rx="14" class="frame" style="stroke:#b9500b"/>
+  <rect x="910" y="10" width="270" height="620" rx="14" class="frame" style="stroke:#474747"/>
   <text x="930" y="44" class="h">Visitor's AWS account</text>
 
   <rect x="930" y="190" width="230" height="110" rx="10" class="visitor"/>
   <text x="947" y="217" class="n">SecurityStackScanRole</text>
-  <text x="947" y="238" class="s">AWS SecurityAudit policy:</text>
-  <text x="947" y="254" class="s">read settings, change nothing</text>
+  <text x="947" y="238" class="s">26 read-only permissions:</text>
+  <text x="947" y="254" class="s">see settings, change nothing</text>
   <text x="947" y="270" class="s">trusts only the scan worker,</text>
   <text x="947" y="286" class="s">only with this scan's External ID</text>
 
