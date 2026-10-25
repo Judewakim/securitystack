@@ -69,6 +69,6 @@ jobs:
           {
             echo "## Deploy outputs"
             for f in service-outputs.json baseline-outputs.json; do
-              [ -f "$f" ] && { echo "### $f"; echo '```json'; cat "$f"; echo '```'; }
+              if [ -f "$f" ]; then echo "### $f"; echo '```json'; cat "$f"; echo '```'; fi
             done
           } >> "$GITHUB_STEP_SUMMARY"
